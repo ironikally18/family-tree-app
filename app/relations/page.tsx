@@ -363,6 +363,8 @@ export default function RelationsPage() {
 
         <div className="mt-5 rounded-2xl bg-neutral-900 p-4">
           <h2 className="font-bold">夫婦・離縁を登録</h2>
+          <p>家系図作成の都合上、子を登録する場合、２名１組で登録</p>
+          <p>親１名の場合、仮登録可</p>
 
           <select className="mt-4 w-full rounded-xl border border-neutral-700 bg-neutral-800 px-4 py-3" value={person1Id} onChange={(e) => setPerson1Id(e.target.value)}>
             <option value="">人物1</option>

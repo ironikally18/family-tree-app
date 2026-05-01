@@ -185,7 +185,7 @@ export default function PeoplePage() {
   return (
     <main className="min-h-screen bg-neutral-950 p-5 pb-24 text-white">
       <div className="mx-auto max-w-md">
-        <h1 className="text-xl font-bold">人物管理</h1>
+        <h1 className="text-xl font-bold">人登録</h1>
 
         {/* 追加フォーム */}
         <div className="mt-5 bg-neutral-900 p-4 rounded-2xl">
@@ -197,7 +197,7 @@ export default function PeoplePage() {
           />
           <input
             className="w-full mb-2 bg-neutral-800 p-3 rounded"
-            placeholder="ふりがな"
+            placeholder="ふりがな（入力あり→下記一覧で名前順表示）"
             value={kana}
             onChange={(e) => setKana(e.target.value)}
           />
@@ -216,7 +216,7 @@ export default function PeoplePage() {
           <input
             type="number"
             className="w-full mb-2 bg-neutral-800 p-3 rounded"
-            placeholder="兄弟順（例：1=長男/長女、2=次男/次女）"
+            placeholder="誕生順番（第1子=1、第2子=2、…）"
             value={siblingOrder}
             onChange={(e) => setSiblingOrder(e.target.value)}
           />
@@ -246,111 +246,122 @@ export default function PeoplePage() {
         )}
 
         {/* 一覧 */}
-        <div className="mt-5 space-y-3">
-          {people.map((p) => (
-            <div key={p.id} className="bg-neutral-800 p-4 rounded-xl">
-              {editingId === p.id ? (
-                <>
-                  <input
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.name}
-                    onChange={(e) =>
-                      setEditData({ ...editData, name: e.target.value })
-                    }
-                  />
-                  <input
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.kana || ""}
-                    onChange={(e) =>
-                      setEditData({ ...editData, kana: e.target.value })
-                    }
-                  />
-                  <input
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.maiden_name || ""}
-                    onChange={(e) =>
-                      setEditData({
-                        ...editData,
-                        maiden_name: e.target.value,
-                      })
-                    }
-                  />
-                  <input
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.birth_order_label || ""}
-                    onChange={(e) =>
-                      setEditData({
-                        ...editData,
-                        birth_order_label: e.target.value,
-                      })
-                    }
-                  />
-                  <input
-                    type="number"
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.sibling_order || ""}
-                    onChange={(e) =>
-                      setEditData({
-                        ...editData,
-                        sibling_order: e.target.value ? Number(e.target.value) : null,
-                      })
-                    }
-                  />
-                  <input
-                    type="date"
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.birth_date || ""}
-                    onChange={(e) =>
-                      setEditData({
-                        ...editData,
-                        birth_date: e.target.value,
-                      })
-                    }
-                  />
-                  <textarea
-                    className="w-full mb-2 bg-neutral-700 p-2 rounded"
-                    value={editData.profile_note || ""}
-                    onChange={(e) =>
-                      setEditData({
-                        ...editData,
-                        profile_note: e.target.value,
-                      })
-                    }
-                  />
+        <div className="mt-5 overflow-x-auto">
+          <div className="min-w-[1100px] space-y-2">
+            {people.map((p) => (
+              <div key={p.id} className="rounded-xl bg-neutral-800 p-3">
+                {editingId === p.id ? (
+                  <div className="grid grid-cols-[140px_140px_120px_120px_90px_140px_1fr_80px_80px] items-center gap-2 text-sm">
+                    <input
+                      className="rounded bg-neutral-700 p-2"
+                      value={editData.name || ""}
+                      onChange={(e) =>
+                        setEditData({ ...editData, name: e.target.value })
+                      }
+                    />
 
-                  <button
-                    onClick={saveEdit}
-                    className="w-full bg-green-600 p-2 rounded"
-                  >
-                    保存
-                  </button>
-                  <button
-                    onClick={deletePerson}
-                    className="mt-2 w-full bg-red-600 p-2 rounded"
-                  >
-                    削除
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="font-bold">{p.name}</div>
-                  {p.kana && <div className="text-sm">{p.kana}</div>}
-                  {p.maiden_name && <div>旧姓：{p.maiden_name}</div>}
-                  {p.birth_order_label && <div>{p.birth_order_label}</div>}
-                  {p.sibling_order && <div>兄弟順：{p.sibling_order}</div>}
-                  {p.birth_date && <div>{p.birth_date}</div>}
-                  {p.profile_note && <div>{p.profile_note}</div>}
+                    <input
+                      className="rounded bg-neutral-700 p-2"
+                      value={editData.kana || ""}
+                      onChange={(e) =>
+                        setEditData({ ...editData, kana: e.target.value })
+                      }
+                    />
 
-                  <button
-                    onClick={() => startEdit(p)}
-                    className="mt-2 w-full bg-blue-600 p-2 rounded"
-                  >
-                    編集
-                  </button>
-                </>
-              )}
-            </div>
-          ))}
+                    <input
+                      className="rounded bg-neutral-700 p-2"
+                      value={editData.maiden_name || ""}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          maiden_name: e.target.value,
+                        })
+                      }
+                    />
+
+                    <input
+                      className="rounded bg-neutral-700 p-2"
+                      value={editData.birth_order_label || ""}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          birth_order_label: e.target.value,
+                        })
+                      }
+                    />
+
+                    <input
+                      type="number"
+                      className="rounded bg-neutral-700 p-2"
+                      value={editData.sibling_order || ""}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          sibling_order: e.target.value
+                            ? Number(e.target.value)
+                            : null,
+                        })
+                      }
+                    />
+
+                    <input
+                      type="date"
+                      className="rounded bg-neutral-700 p-2"
+                      value={editData.birth_date || ""}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          birth_date: e.target.value,
+                        })
+                      }
+                    />
+
+                    <textarea
+                      className="min-h-[40px] rounded bg-neutral-700 p-2"
+                      value={editData.profile_note || ""}
+                      onChange={(e) =>
+                        setEditData({
+                          ...editData,
+                          profile_note: e.target.value,
+                        })
+                      }
+                    />
+
+                    <button
+                      onClick={saveEdit}
+                      className="rounded bg-green-600 p-2 font-semibold"
+                    >
+                      保存
+                    </button>
+
+                    <button
+                      onClick={deletePerson}
+                      className="rounded bg-red-600 p-2 font-semibold"
+                    >
+                      削除
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[140px_140px_120px_120px_90px_140px_1fr_80px] items-center gap-3 text-sm">
+                    <div className="font-bold">{p.name}</div>
+                    <div className="text-neutral-300">{p.kana || "-"}</div>
+                    <div>{p.maiden_name ? `旧姓：${p.maiden_name}` : "-"}</div>
+                    <div>{p.birth_order_label || "-"}</div>
+                    <div>{p.sibling_order ? `兄弟順：${p.sibling_order}` : "-"}</div>
+                    <div>{p.birth_date || "-"}</div>
+                    <div className="truncate">{p.profile_note || "-"}</div>
+
+                    <button
+                      onClick={() => startEdit(p)}
+                      className="rounded bg-blue-600 px-3 py-2 text-sm font-semibold"
+                    >
+                      編集
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
         <div className="mt-8 rounded-2xl bg-neutral-900 p-4">
           <h2 className="font-bold text-red-300">削除済み</h2>

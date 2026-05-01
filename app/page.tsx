@@ -154,9 +154,11 @@ export default function Home() {
       <div className="mx-auto max-w-md px-5 py-8">
         <div className="rounded-2xl bg-neutral-900 p-6 shadow-lg">
           <h1 className="text-2xl font-bold">家系図アプリ</h1>
-          <p className="mt-2 text-sm text-neutral-400">
-            家族・親戚で共有する家系図管理アプリです。
-          </p>
+          <div className="mt-2 text-sm text-neutral-400 space-y-1">
+            <p>家系図をちょっと共有する管理アプリです。</p>
+            <p>画面再下端のメニューで登録、閲覧できます。</p>
+            <p>作成：津幡晃徳</p>
+          </div>
 
           {userEmail ? (
             <div className="mt-6 space-y-5">
@@ -198,9 +200,6 @@ export default function Home() {
                         className="rounded-lg bg-neutral-900 px-4 py-3"
                       >
                         <div className="font-semibold">{f.name}</div>
-                        <div className="mt-1 text-xs text-neutral-500">
-                          {f.id}
-                        </div>
                       </div>
                     ))}
                   </div>
