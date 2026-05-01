@@ -34,25 +34,33 @@ export default function PeoplePage() {
 
   const [deletedPeople, setDeletedPeople] = useState<Person[]>([]);
 
+  const [familyOptions, setFamilyOptions] = useState<{ id: string, name: string }[]>([]);
+  const [selectedFamilyId, setSelectedFamilyId] = useState("");
+
   useEffect(() => {
-    loadFamily();
+    loadFamilies();
   }, []);
 
-  async function loadFamily() {
-    const { data, error } = await supabase
+  async function loadFamilies() {
+    const { data: memberData } = await supabase
       .from("family_members")
-      .select("family_id, role")
-      .limit(1)
-      .single();
+      .select("family_id");
 
-    if (error || !data) {
-      setMessage("参加中の家系グループが見つかりません。");
-      return;
+    if (!memberData) return;
+
+    const ids = Array.from(new Set(memberData.map(x => x.family_id)));
+
+    const { data: families } = await supabase
+      .from("families")
+      .select("id,name")
+      .in("id", ids);
+
+    setFamilyOptions(families ?? []);
+
+    if (families && families.length > 0) {
+      setSelectedFamilyId(families[0].id);
+      loadPeople(families[0].id);
     }
-
-    setFamilyId(data.family_id);
-    await loadPeople(data.family_id);
-    await loadDeletedPeople(data.family_id);
   }
 
   async function restorePerson(personId: string) {
@@ -101,10 +109,10 @@ export default function PeoplePage() {
   }
 
   async function addPerson() {
-    if (!familyId) return;
+    if (!selectedFamilyId) return;
 
     const { error } = await supabase.from("people").insert({
-      family_id: familyId,
+      family_id: selectedFamilyId,
       name,
       kana,
       maiden_name: maidenName,
@@ -119,16 +127,8 @@ export default function PeoplePage() {
       return;
     }
 
-    setName("");
-    setKana("");
-    setMaidenName("");
-    setBirthOrderLabel("");
-    setBirthDate("");
-    setProfileNote("");
-    setSiblingOrder("");
-
     setMessage("追加しました");
-    loadPeople(familyId);
+    loadPeople(selectedFamilyId);
   }
 
   function startEdit(p: Person) {
@@ -187,8 +187,26 @@ export default function PeoplePage() {
       <div className="mx-auto max-w-md">
         <h1 className="text-xl font-bold">人登録</h1>
 
+
+
         {/* 追加フォーム */}
         <div className="mt-5 bg-neutral-900 p-4 rounded-2xl">
+
+          <select
+            className="w-full mb-3 bg-neutral-800 p-3 rounded"
+            value={selectedFamilyId}
+            onChange={(e) => {
+              setSelectedFamilyId(e.target.value);
+              loadPeople(e.target.value);
+            }}
+          >
+            {familyOptions.map(f => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+
           <input
             className="w-full mb-2 bg-neutral-800 p-3 rounded"
             placeholder="氏名"

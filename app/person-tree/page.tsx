@@ -71,36 +71,24 @@ function PersonTreeContent() {
   }, []);
 
   async function loadFamilies() {
-    const { data: memberData, error } = await supabase
+    const { data: memberData } = await supabase
       .from("family_members")
       .select("family_id");
 
-    if (error || !memberData || memberData.length === 0) {
-      setMessage("参加中の家系グループが見つかりません。");
-      return;
-    }
+    if (!memberData) return;
 
-    const familyIds = Array.from(
-      new Set(memberData.map((x) => x.family_id))
-    );
+    const ids = Array.from(new Set(memberData.map(x => x.family_id)));
 
-    // 👇 家系名を取得（ここが重要）
-    const { data: familyData } = await supabase
+    const { data: families } = await supabase
       .from("families")
-      .select("id, name")
-      .in("id", familyIds);
+      .select("id,name")
+      .in("id", ids);
 
-    const options =
-      familyData?.map((f) => ({
-        family_id: f.id,
-        label: f.name, // ← 津幡家・須貝家が表示される
-      })) ?? [];
+    setFamilyOptions(families ?? []);
 
-    setFamilyOptions(options);
-
-    if (options.length > 0) {
-      setSelectedFamilyId(options[0].family_id);
-      await loadFamilyData(options[0].family_id);
+    if (families && families.length > 0) {
+      setSelectedFamilyId(families[0].id);
+      loadPeople(families[0].id);
     }
   }
 
@@ -110,7 +98,7 @@ function PersonTreeContent() {
     const { data: peopleData } = await supabase
       .from("people")
       .select("id, name, kana, sibling_order")
-      .eq("family_id", fid)
+      .eq("family_id", selectedFamilyId)
       .is("deleted_at", null)
       .order("kana", { ascending: true });
 

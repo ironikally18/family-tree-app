@@ -57,24 +57,33 @@ export default function RelationsPage() {
 
   const [message, setMessage] = useState("");
 
+  const [familyOptions, setFamilyOptions] = useState<any[]>([]);
+  const [selectedFamilyId, setSelectedFamilyId] = useState("");
+
   useEffect(() => {
-    loadFamily();
+    loadFamilies();
   }, []);
 
-  async function loadFamily() {
-    const { data, error } = await supabase
+  async function loadFamilies() {
+    const { data: memberData } = await supabase
       .from("family_members")
-      .select("family_id")
-      .limit(1)
-      .single();
+      .select("family_id");
 
-    if (error || !data) {
-      setMessage("参加中の家系グループが見つかりません。");
-      return;
+    if (!memberData) return;
+
+    const ids = Array.from(new Set(memberData.map(x => x.family_id)));
+
+    const { data: families } = await supabase
+      .from("families")
+      .select("id,name")
+      .in("id", ids);
+
+    setFamilyOptions(families ?? []);
+
+    if (families && families.length > 0) {
+      setSelectedFamilyId(families[0].id);
+      loadRelations(families[0].id);
     }
-
-    setFamilyId(data.family_id);
-    await reloadAll(data.family_id);
   }
 
   async function reloadAll(fid: string) {
@@ -87,7 +96,7 @@ export default function RelationsPage() {
     const { data, error } = await supabase
       .from("people")
       .select("id, name")
-      .eq("family_id", fid)
+      .eq("family_id", selectedFamilyId)
       .is("deleted_at", null)
       .order("kana", { ascending: true });
 
@@ -110,7 +119,7 @@ export default function RelationsPage() {
         person1:person1_id(id, name),
         person2:person2_id(id, name)
       `)
-      .eq("family_id", fid)
+      .eq("family_id", selectedFamilyId)
       .is("deleted_at", null)
       .order("created_at", { ascending: true });
 
@@ -140,7 +149,7 @@ export default function RelationsPage() {
           person2:person2_id(id, name)
         )
       `)
-      .eq("family_id", fid)
+      .eq("family_id", selectedFamilyId)
       .is("deleted_at", null)
       .order("display_order", { ascending: true });
 
@@ -184,7 +193,7 @@ export default function RelationsPage() {
     const { data: userData } = await supabase.auth.getUser();
 
     const { error } = await supabase.from("relationships").insert({
-      family_id: familyId,
+      family_id: selectedFamilyId,
       person1_id: person1Id,
       person2_id: person2Id,
       relation_type: relationType,
@@ -360,6 +369,22 @@ export default function RelationsPage() {
     <main className="min-h-screen bg-neutral-950 p-5 pb-24 text-white">
       <div className="mx-auto max-w-md">
         <h1 className="text-xl font-bold">関係登録</h1>
+
+        <select
+          className="mt-4 w-full rounded-xl bg-neutral-800 p-3"
+          value={selectedFamilyId}
+          onChange={(e) => {
+            setSelectedFamilyId(e.target.value);
+            loadRelations(e.target.value);
+            loadPeople(e.target.value); // 人物も切替
+          }}
+        >
+          {familyOptions.map(f => (
+            <option key={f.id} value={f.id}>
+              {f.name}
+            </option>
+          ))}
+        </select>
 
         <div className="mt-5 rounded-2xl bg-neutral-900 p-4">
           <h2 className="font-bold">夫婦・離縁を登録</h2>
