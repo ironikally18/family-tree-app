@@ -2,7 +2,6 @@
 
 import { Suspense } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import BottomNav from "../../components/BottomNav";
 
@@ -25,6 +24,11 @@ type CoupleChild = {
   relationship_id: string;
   child_id: string;
   display_order: number | null;
+};
+
+type FamilyOption = {
+  family_id: string;
+  label: string;
 };
 
 type NodeItem = {
@@ -52,9 +56,8 @@ const GENERATION_GAP = 170;
 const PAGE_MARGIN = 48;
 
 function PersonTreeContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const centerId = searchParams.get("id");
+  const [familyOptions, setFamilyOptions] = useState<FamilyOption[]>([]);
+  const [selectedFamilyId, setSelectedFamilyId] = useState("");
 
   const [people, setPeople] = useState<Person[]>([]);
   const [relations, setRelations] = useState<Relation[]>([]);
@@ -63,50 +66,109 @@ function PersonTreeContent() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    loadFamily();
+    loadFamilies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadFamily() {
-    const { data, error } = await supabase
+  async function loadFamilies() {
+    const { data: memberData, error } = await supabase
       .from("family_members")
-      .select("family_id")
-      .limit(1)
-      .single();
+      .select("family_id");
 
-    if (error || !data) {
+    if (error || !memberData || memberData.length === 0) {
       setMessage("参加中の家系グループが見つかりません。");
       return;
     }
 
-    const familyId = data.family_id;
+    const familyIds = Array.from(
+      new Set(memberData.map((x) => x.family_id))
+    );
+
+    // 👇 家系名を取得（ここが重要）
+    const { data: familyData } = await supabase
+      .from("families")
+      .select("id, name")
+      .in("id", familyIds);
+
+    const options =
+      familyData?.map((f) => ({
+        family_id: f.id,
+        label: f.name, // ← 津幡家・須貝家が表示される
+      })) ?? [];
+
+    setFamilyOptions(options);
+
+    if (options.length > 0) {
+      setSelectedFamilyId(options[0].family_id);
+      await loadFamilyData(options[0].family_id);
+    }
+  }
+
+  async function loadFamilyData(fid: string) {
+    setMessage("");
 
     const { data: peopleData } = await supabase
       .from("people")
       .select("id, name, kana, sibling_order")
-      .eq("family_id", familyId)
+      .eq("family_id", fid)
       .is("deleted_at", null)
       .order("kana", { ascending: true });
 
     const { data: relationData } = await supabase
       .from("relationships")
       .select("id, relation_type, person1_id, person2_id")
-      .eq("family_id", familyId)
+      .eq("family_id", fid)
       .is("deleted_at", null);
 
     const { data: ccData } = await supabase
       .from("couple_children")
       .select("id, relationship_id, child_id, display_order")
-      .eq("family_id", familyId)
+      .eq("family_id", fid)
       .is("deleted_at", null);
 
-    setPeople(peopleData ?? []);
-    setRelations((relationData ?? []) as Relation[]);
-    setCoupleChildren(ccData ?? []);
+    const loadedPeople = peopleData ?? [];
+    const loadedRelations = (relationData ?? []) as Relation[];
+    const loadedCoupleChildren = ccData ?? [];
 
-    if (!centerId && peopleData && peopleData.length > 0) {
-      setSelectedId(peopleData[0].id);
-    }
+    setPeople(loadedPeople);
+    setRelations(loadedRelations);
+    setCoupleChildren(loadedCoupleChildren);
+
+    const topPersonId = findTopPersonId(
+      loadedPeople,
+      loadedRelations,
+      loadedCoupleChildren
+    );
+
+    setSelectedId(topPersonId);
+  }
+
+  function findTopPersonId(
+    targetPeople: Person[],
+    targetRelations: Relation[],
+    targetCoupleChildren: CoupleChild[]
+  ) {
+    if (targetPeople.length === 0) return "";
+
+    const childIds = new Set(targetCoupleChildren.map((cc) => cc.child_id));
+
+    const rootPeople = targetPeople
+      .filter((p) => !childIds.has(p.id))
+      .sort((a, b) => {
+        const ak = a.kana || a.name;
+        const bk = b.kana || b.name;
+        return ak.localeCompare(bk, "ja");
+      });
+
+    const rootWithCouple = rootPeople.find((p) =>
+      targetRelations.some(
+        (r) =>
+          (r.relation_type === "spouse" || r.relation_type === "divorced") &&
+          (r.person1_id === p.id || r.person2_id === p.id)
+      )
+    );
+
+    return rootWithCouple?.id ?? rootPeople[0]?.id ?? targetPeople[0].id;
   }
 
   const personMap = useMemo(() => {
@@ -129,7 +191,7 @@ function PersonTreeContent() {
     return m;
   }, [relations]);
 
-  const actualCenterId = centerId || selectedId;
+  const actualCenterId = selectedId;
   const center = actualCenterId ? personMap.get(actualCenterId) ?? null : null;
 
   function sortPeople(a: Person, b: Person) {
@@ -664,8 +726,7 @@ function PersonTreeContent() {
 
   function PersonCard({ node }: { node: NodeItem }) {
     return (
-      <button
-        onClick={() => router.push(`/person-tree?id=${node.person.id}`)}
+      <div
         className={[
           "absolute flex items-center justify-center rounded-lg border text-white shadow-lg",
           node.active
@@ -689,27 +750,31 @@ function PersonTreeContent() {
         >
           {node.person.name}
         </div>
-      </button>
+      </div>
     );
   }
 
   return (
     <main className="min-h-screen bg-neutral-950 p-5 pb-24 text-white">
       <div className="mx-auto max-w-md">
-        <h1 className="text-xl font-bold">中心家系図</h1>
+        <h1 className="text-xl font-bold">家系図</h1>
         <p className="mt-2 text-sm text-neutral-400">
-          中心人物から上位の夫婦枝をたどって表示します。
+          -
         </p>
 
         <select
           className="mt-4 w-full rounded-xl border border-neutral-700 bg-neutral-800 px-4 py-3"
-          value={actualCenterId || ""}
-          onChange={(e) => router.push(`/person-tree?id=${e.target.value}`)}
+          value={selectedFamilyId}
+          onChange={async (e) => {
+            const fid = e.target.value;
+            setSelectedFamilyId(fid);
+            await loadFamilyData(fid);
+          }}
         >
-          <option value="">中心人物を選択</option>
-          {people.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
+          <option value="">家系グループを選択</option>
+          {familyOptions.map((f) => (
+            <option key={f.family_id} value={f.family_id}>
+              {f.label}
             </option>
           ))}
         </select>
@@ -720,7 +785,7 @@ function PersonTreeContent() {
       <div className="mt-5 overflow-auto rounded-2xl border border-neutral-700 bg-[radial-gradient(circle_at_top,rgba(38,38,38,0.9),rgba(10,10,10,0.95))] p-5">
         {!center ? (
           <div className="p-8 text-center text-sm text-neutral-400">
-            中心人物を選択してください。
+            -
           </div>
         ) : (
           <div className="relative" style={{ width: layout.width, height: layout.height }}>
