@@ -15,6 +15,11 @@ type Person = {
   sibling_order: number | null;
 };
 
+type FamilyOption = {
+  id: string;
+  name: string;
+};
+
 export default function PeoplePage() {
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -42,26 +47,35 @@ export default function PeoplePage() {
   }, []);
 
   async function loadFamilies() {
-    const { data: memberData } = await supabase
+    const { data: memberData, error } = await supabase
       .from("family_members")
       .select("family_id");
 
-    if (!memberData) return;
+    if (error || !memberData || memberData.length === 0) {
+      setMessage("参加中の家系グループが見つかりません。");
+      return;
+    }
 
-    const ids = Array.from(new Set(memberData.map(x => x.family_id)));
+    const ids = Array.from(new Set(memberData.map((x) => x.family_id)));
 
-    const { data: families } = await supabase
+    const { data: families } = (await supabase
       .from("families")
-      .select("id,name")
-      .in("id", ids);
+      .select("id, name")
+      .in("id", ids)) as {
+        data: FamilyOption[] | null;
+      };
 
-    setFamilyOptions(families ?? []);
+    const options = families ?? [];
 
-    if (families && families.length > 0) {
-      setSelectedFamilyId(families[0].id);
-      loadPeople(families[0].id);
+    setFamilyOptions(options);
+
+    if (options.length > 0) {
+      setSelectedFamilyId(options[0].id);
+      await loadPeople(options[0].id);
+      await loadDeletedPeople(options[0].id);
     }
   }
+
 
   async function restorePerson(personId: string) {
     const { error } = await supabase.rpc("restore_person", {
@@ -75,9 +89,9 @@ export default function PeoplePage() {
 
     setMessage("復元しました。");
 
-    if (familyId) {
-      await loadPeople(familyId);
-      await loadDeletedPeople(familyId);
+    if (selectedFamilyId) {
+      await loadPeople(selectedFamilyId);
+      await loadDeletedPeople(selectedFamilyId);
     }
   }
 
@@ -159,7 +173,7 @@ export default function PeoplePage() {
 
     setEditingId(null);
     setMessage("更新しました");
-    if (familyId) loadPeople(familyId);
+    if (selectedFamilyId) loadPeople(selectedFamilyId);
   }
 
   async function deletePerson() {
@@ -179,7 +193,10 @@ export default function PeoplePage() {
     setEditingId(null);
     setMessage("削除しました。");
 
-    if (familyId) loadPeople(familyId);
+    if (selectedFamilyId) {
+      await loadPeople(selectedFamilyId);
+      await loadDeletedPeople(selectedFamilyId);
+    }
   }
 
   return (

@@ -71,24 +71,35 @@ function PersonTreeContent() {
   }, []);
 
   async function loadFamilies() {
-    const { data: memberData } = await supabase
+    const { data: memberData, error } = await supabase
       .from("family_members")
       .select("family_id");
 
-    if (!memberData) return;
+    if (error || !memberData || memberData.length === 0) {
+      setMessage("参加中の家系グループが見つかりません。");
+      return;
+    }
 
-    const ids = Array.from(new Set(memberData.map(x => x.family_id)));
+    const ids = Array.from(new Set(memberData.map((x) => x.family_id)));
 
-    const { data: families } = await supabase
+    const { data: families } = (await supabase
       .from("families")
-      .select("id,name")
-      .in("id", ids);
+      .select("id, name")
+      .in("id", ids)) as {
+        data: { id: string; name: string }[] | null;
+      };
 
-    setFamilyOptions(families ?? []);
+    const options: FamilyOption[] =
+      families?.map((f) => ({
+        family_id: f.id,
+        label: f.name,
+      })) ?? [];
 
-    if (families && families.length > 0) {
-      setSelectedFamilyId(families[0].id);
-      loadPeople(families[0].id);
+    setFamilyOptions(options);
+
+    if (options.length > 0) {
+      setSelectedFamilyId(options[0].family_id);
+      await loadFamilyData(options[0].family_id);
     }
   }
 
