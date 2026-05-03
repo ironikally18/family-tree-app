@@ -14,6 +14,7 @@ type Person = {
 
 type Relation = {
   id: string;
+  family_id: string;
   relation_type: "spouse" | "divorced" | "parent_child" | "adoptive_parent_child";
   person1_id: string;
   person2_id: string;
@@ -136,7 +137,7 @@ function PersonTreeContent() {
     // 2. その家系に直接登録されている夫婦・離縁関係
     const { data: relationsByFamily } = await supabase
       .from("relationships")
-      .select("id, relation_type, person1_id, person2_id")
+      .select("id, family_id, relation_type, person1_id, person2_id")
       .eq("family_id", fid)
       .is("deleted_at", null);
 
@@ -146,13 +147,13 @@ function PersonTreeContent() {
     if (basePersonIds.length > 0) {
       const { data: r1 } = await supabase
         .from("relationships")
-        .select("id, relation_type, person1_id, person2_id")
+        .select("id, family_id, relation_type, person1_id, person2_id")
         .in("person1_id", basePersonIds)
         .is("deleted_at", null);
 
       const { data: r2 } = await supabase
         .from("relationships")
-        .select("id, relation_type, person1_id, person2_id")
+        .select("id, family_id, relation_type, person1_id, person2_id")
         .in("person2_id", basePersonIds)
         .is("deleted_at", null);
 
@@ -184,7 +185,7 @@ function PersonTreeContent() {
     if (relationIdsFromChild.length > 0) {
       const { data } = await supabase
         .from("relationships")
-        .select("id, relation_type, person1_id, person2_id")
+        .select("id, family_id, relation_type, person1_id, person2_id")
         .in("id", relationIdsFromChild)
         .is("deleted_at", null);
 
@@ -255,10 +256,20 @@ function PersonTreeContent() {
     setRelations(loadedRelations);
     setCoupleChildren(loadedCoupleChildren);
 
+    const mainRelations = loadedRelations.filter(
+      (r) => r.family_id === fid
+    );
+
+    const mainRelationIds = new Set(mainRelations.map((r) => r.id));
+
+    const mainCoupleChildren = loadedCoupleChildren.filter((cc) =>
+      mainRelationIds.has(cc.relationship_id)
+    );
+
     const topPersonId = findTopPersonId(
-      loadedPeople,
-      loadedRelations,
-      loadedCoupleChildren
+      basePeople,
+      mainRelations,
+      mainCoupleChildren
     );
 
     setSelectedId(topPersonId);
@@ -334,7 +345,9 @@ function PersonTreeContent() {
     return coupleChildren
       .filter((cc) => cc.child_id === personId)
       .map((cc) => relationMap.get(cc.relationship_id))
-      .filter((r): r is Relation => Boolean(r));
+      .filter((r): r is Relation => {
+        return !!r && r.family_id === selectedFamilyId;
+      });
   }
 
   function childrenOfCouple(relationId: string) {
@@ -681,9 +694,7 @@ function PersonTreeContent() {
 
       const p1 = personMap.get(r.person1_id);
       const p2 = personMap.get(r.person2_id);
-      if (!p1 || !p2) {
-        return { width: 0, height: 0, nodes: [], lines: [] };
-      }
+      if (!p1 || !p2) return;
 
       const p1IsBaseFamily = basePersonIds.includes(p1.id);
       const p2IsBaseFamily = basePersonIds.includes(p2.id);
@@ -817,59 +828,59 @@ function PersonTreeContent() {
       }
     }
 
-      let roots: Relation[] = [];
+    let roots: Relation[] = [];
 
-      if (center) {
-        const rootMap = new Map<string, Relation>();
+    if (center) {
+      const rootMap = new Map<string, Relation>();
 
-        topAncestorRelationsForPerson(center.id).forEach((r) => rootMap.set(r.id, r));
+      topAncestorRelationsForPerson(center.id).forEach((r) => rootMap.set(r.id, r));
 
-        spouseRelationsOf(center.id).forEach((sr) => {
-          const otherId = sr.person1_id === center.id ? sr.person2_id : sr.person1_id;
-          topAncestorRelationsForPerson(otherId).forEach((r) => rootMap.set(r.id, r));
-        });
+      spouseRelationsOf(center.id).forEach((sr) => {
+        const otherId = sr.person1_id === center.id ? sr.person2_id : sr.person1_id;
+        topAncestorRelationsForPerson(otherId).forEach((r) => rootMap.set(r.id, r));
+      });
 
-        roots = Array.from(rootMap.values());
+      roots = Array.from(rootMap.values());
+    }
+
+    if (roots.length === 0 && center) {
+      const ownRels = spouseRelationsOf(center.id);
+      if (ownRels.length > 0) {
+        roots = ownRels;
       }
+    }
 
-      if (roots.length === 0 && center) {
-        const ownRels = spouseRelationsOf(center.id);
-        if (ownRels.length > 0) {
-          roots = ownRels;
-        }
-      }
+    if (roots.length === 0 && center) {
+      layoutPersonOnly(center, PAGE_MARGIN, 0);
+    } else {
+      let cursorX = PAGE_MARGIN;
 
-      if (roots.length === 0 && center) {
-        layoutPersonOnly(center, PAGE_MARGIN, 0);
-      } else {
-        let cursorX = PAGE_MARGIN;
+      roots.forEach((r) => {
+        const width = measureRelation(r);
+        layoutRelation(r, cursorX, 0);
+        cursorX += width + BRANCH_GAP;
+      });
+    }
 
-        roots.forEach((r) => {
-          const width = measureRelation(r);
-          layoutRelation(r, cursorX, 0);
-          cursorX += width + BRANCH_GAP;
-        });
-      }
+    const maxX = Math.max(
+      PAGE_MARGIN + 400,
+      ...nodes.map((n) => n.x + PERSON_W),
+      ...lines.map((l) => Math.max(l.x1, l.x2))
+    );
 
-      const maxX = Math.max(
-        PAGE_MARGIN + 400,
-        ...nodes.map((n) => n.x + PERSON_W),
-        ...lines.map((l) => Math.max(l.x1, l.x2))
-      );
+    const maxY = Math.max(
+      PAGE_MARGIN + 400,
+      ...nodes.map((n) => n.y + PERSON_H),
+      ...lines.map((l) => Math.max(l.y1, l.y2))
+    );
 
-      const maxY = Math.max(
-        PAGE_MARGIN + 400,
-        ...nodes.map((n) => n.y + PERSON_H),
-        ...lines.map((l) => Math.max(l.y1, l.y2))
-      );
-
-      return {
-        nodes,
-        lines,
-        width: maxX + PAGE_MARGIN,
-        height: maxY + PAGE_MARGIN,
-      };
-    }, [center, people, relations, coupleChildren, personMap, basePersonIds]);
+    return {
+      nodes,
+      lines,
+      width: maxX + PAGE_MARGIN,
+      height: maxY + PAGE_MARGIN,
+    };
+  }, [center, people, relations, coupleChildren, personMap, basePersonIds]);
 
   function PersonCard({ node }: { node: NodeItem }) {
     return (

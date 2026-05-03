@@ -4,6 +4,12 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import BottomNav from "../components/BottomNav";
 
+type Family = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
 export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -12,7 +18,7 @@ export default function Home() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const [familyName, setFamilyName] = useState("");
-  const [families, setFamilies] = useState<any[]>([]);
+  const [families, setFamilies] = useState<Family[]>([]);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -34,7 +40,7 @@ export default function Home() {
   async function loadFamilies() {
     const { data, error } = await supabase
       .from("families")
-      .select("*")
+      .select("id, name, created_at")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -155,7 +161,7 @@ export default function Home() {
         <div className="rounded-2xl bg-neutral-900 p-6 shadow-lg">
           <h1 className="text-2xl font-bold">家系図アプリ</h1>
           <div className="mt-2 text-sm text-neutral-400 space-y-1">
-            <p>家系図をちょっと共有する管理アプリです。</p>
+            <p>家系図をちょっと共有するアプリです。</p>
             <p>画面再下端のメニューで登録、閲覧できます。</p>
             <p>作成：津幡晃徳</p>
           </div>
@@ -186,7 +192,7 @@ export default function Home() {
               </div>
 
               <div className="rounded-xl bg-neutral-800 p-4">
-                <h2 className="font-bold">参加中の家系グループ</h2>
+                <h2 className="font-bold">登録済家系グループ</h2>
 
                 {families.length === 0 ? (
                   <p className="mt-3 text-sm text-neutral-400">
@@ -194,14 +200,20 @@ export default function Home() {
                   </p>
                 ) : (
                   <div className="mt-3 space-y-2">
-                    {families.map((f) => (
-                      <div
-                        key={f.id}
-                        className="rounded-lg bg-neutral-900 px-4 py-3"
-                      >
-                        <div className="font-semibold">{f.name}</div>
-                      </div>
-                    ))}
+                    {[...families]
+                      .sort(
+                        (a, b) =>
+                          new Date(a.created_at).getTime() -
+                          new Date(b.created_at).getTime()
+                      )
+                      .map((f) => (
+                        <div
+                          key={f.id}
+                          className="rounded-lg bg-neutral-900 px-4 py-3"
+                        >
+                          <div className="font-semibold">{f.name}</div>
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>

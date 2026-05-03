@@ -29,6 +29,12 @@ type CoupleChild = {
   relationship?: Relation;
 };
 
+type Family = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
 export default function RelationsPage() {
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -61,7 +67,7 @@ export default function RelationsPage() {
 
   const [message, setMessage] = useState("");
 
-  const [familyOptions, setFamilyOptions] = useState<any[]>([]);
+  const [familyOptions, setFamilyOptions] = useState<Family[]>([]);
   const [selectedFamilyId, setSelectedFamilyId] = useState("");
 
   useEffect(() => {
@@ -82,7 +88,7 @@ export default function RelationsPage() {
 
     const { data: families } = await supabase
       .from("families")
-      .select("id, name")
+      .select("id, name, created_at")
       .in("id", ids);
 
     setFamilyOptions(families ?? []);
