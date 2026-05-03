@@ -47,13 +47,14 @@ type LineItem = {
   kind: "spouse" | "divorced" | "parent" | "sibling";
 };
 
-const PERSON_W = 60;
-const PERSON_H = 106;
+const PERSON_W = 45;
+const PERSON_H = 115;
 const COUPLE_GAP = 12;
-const SIBLING_GAP = 48;
+const SIBLING_GAP = 42;
 const BRANCH_GAP = 90;
 const GENERATION_GAP = 170;
 const PAGE_MARGIN = 48;
+const DIVORCED_EXTRA_GAP = 180;
 
 function PersonTreeContent() {
   const [familyOptions, setFamilyOptions] = useState<FamilyOption[]>([]);
@@ -63,6 +64,7 @@ function PersonTreeContent() {
   const [relations, setRelations] = useState<Relation[]>([]);
   const [coupleChildren, setCoupleChildren] = useState<CoupleChild[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [basePersonIds, setBasePersonIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -106,28 +108,148 @@ function PersonTreeContent() {
   async function loadFamilyData(fid: string) {
     setMessage("");
 
-    const { data: peopleData } = await supabase
-      .from("people")
-      .select("id, name, kana, sibling_order")
-      .eq("family_id", selectedFamilyId)
-      .is("deleted_at", null)
-      .order("kana", { ascending: true });
+    // 1. 選択中の家系に所属している人物を取得
+    const { data: peopleLinkData, error: peopleError } = await supabase
+      .from("person_families")
+      .select(`
+      person:people(
+        id,
+        name,
+        kana,
+        sibling_order
+      )
+    `)
+      .eq("family_id", fid);
 
-    const { data: relationData } = await supabase
+    if (peopleError) {
+      setMessage(peopleError.message);
+      return;
+    }
+
+    const basePeople = (peopleLinkData ?? [])
+      .map((x: any) => x.person)
+      .filter(Boolean) as Person[];
+
+    const basePersonIds = Array.from(new Set(basePeople.map((p) => p.id)));
+    setBasePersonIds(basePersonIds);
+
+    // 2. その家系に直接登録されている夫婦・離縁関係
+    const { data: relationsByFamily } = await supabase
       .from("relationships")
       .select("id, relation_type, person1_id, person2_id")
       .eq("family_id", fid)
       .is("deleted_at", null);
 
-    const { data: ccData } = await supabase
-      .from("couple_children")
-      .select("id, relationship_id, child_id, display_order")
-      .eq("family_id", fid)
-      .is("deleted_at", null);
+    // 3. 所属人物を含む夫婦・離縁関係も拾う
+    let relationsByPerson: Relation[] = [];
 
-    const loadedPeople = peopleData ?? [];
-    const loadedRelations = (relationData ?? []) as Relation[];
-    const loadedCoupleChildren = ccData ?? [];
+    if (basePersonIds.length > 0) {
+      const { data: r1 } = await supabase
+        .from("relationships")
+        .select("id, relation_type, person1_id, person2_id")
+        .in("person1_id", basePersonIds)
+        .is("deleted_at", null);
+
+      const { data: r2 } = await supabase
+        .from("relationships")
+        .select("id, relation_type, person1_id, person2_id")
+        .in("person2_id", basePersonIds)
+        .is("deleted_at", null);
+
+      relationsByPerson = [
+        ...((r1 ?? []) as Relation[]),
+        ...((r2 ?? []) as Relation[]),
+      ];
+    }
+
+    // 4. 所属人物が「子」として登録されている親子関係も拾う
+    let coupleChildrenByChild: CoupleChild[] = [];
+
+    if (basePersonIds.length > 0) {
+      const { data: ccByChild } = await supabase
+        .from("couple_children")
+        .select("id, relationship_id, child_id, display_order")
+        .in("child_id", basePersonIds)
+        .is("deleted_at", null);
+
+      coupleChildrenByChild = (ccByChild ?? []) as CoupleChild[];
+    }
+
+    const relationIdsFromChild = Array.from(
+      new Set(coupleChildrenByChild.map((cc) => cc.relationship_id))
+    );
+
+    let relationsFromChild: Relation[] = [];
+
+    if (relationIdsFromChild.length > 0) {
+      const { data } = await supabase
+        .from("relationships")
+        .select("id, relation_type, person1_id, person2_id")
+        .in("id", relationIdsFromChild)
+        .is("deleted_at", null);
+
+      relationsFromChild = (data ?? []) as Relation[];
+    }
+
+    // 5. 関係を重複除去してまとめる
+    const relationMap = new Map<string, Relation>();
+
+    [
+      ...((relationsByFamily ?? []) as Relation[]),
+      ...relationsByPerson,
+      ...relationsFromChild,
+    ].forEach((r) => {
+      if (r.relation_type === "spouse" || r.relation_type === "divorced") {
+        relationMap.set(r.id, r);
+      }
+    });
+
+    const loadedRelations = Array.from(relationMap.values());
+    const relationIds = loadedRelations.map((r) => r.id);
+
+    // 6. 表示対象の夫婦・離縁関係に紐づく子を取得
+    let coupleChildrenByRelation: CoupleChild[] = [];
+
+    if (relationIds.length > 0) {
+      const { data } = await supabase
+        .from("couple_children")
+        .select("id, relationship_id, child_id, display_order")
+        .in("relationship_id", relationIds)
+        .is("deleted_at", null);
+
+      coupleChildrenByRelation = (data ?? []) as CoupleChild[];
+    }
+
+    const coupleChildMap = new Map<string, CoupleChild>();
+
+    [...coupleChildrenByChild, ...coupleChildrenByRelation].forEach((cc) => {
+      coupleChildMap.set(cc.id, cc);
+    });
+
+    const loadedCoupleChildren = Array.from(coupleChildMap.values());
+
+    // 7. 関係に出てくる人物も追加取得
+    const allPersonIds = Array.from(
+      new Set([
+        ...basePersonIds,
+        ...loadedRelations.flatMap((r) => [r.person1_id, r.person2_id]),
+        ...loadedCoupleChildren.map((cc) => cc.child_id),
+      ])
+    );
+
+    let loadedPeople: Person[] = [];
+
+    if (allPersonIds.length > 0) {
+      const { data } = await supabase
+        .from("people")
+        .select("id, name, kana, sibling_order")
+        .in("id", allPersonIds)
+        .is("deleted_at", null);
+
+      loadedPeople = ((data ?? []) as Person[]).sort((a, b) =>
+        (a.kana || a.name).localeCompare(b.kana || b.name, "ja")
+      );
+    }
 
     setPeople(loadedPeople);
     setRelations(loadedRelations);
@@ -401,7 +523,7 @@ function PersonTreeContent() {
               ? personCenterX + PERSON_W + COUPLE_GAP
               : personCenterX - PERSON_W - COUPLE_GAP;
         } else {
-          const DIVORCED_EXTRA_GAP = 220;
+
 
           const spouseRel = rels.find((rel) => rel.relation_type === "spouse");
           const spouseOther = spouseRel ? relationOtherPerson(spouseRel, person.id) : null;
@@ -559,7 +681,21 @@ function PersonTreeContent() {
 
       const p1 = personMap.get(r.person1_id);
       const p2 = personMap.get(r.person2_id);
-      if (!p1 || !p2) return;
+      if (!p1 || !p2) {
+        return { width: 0, height: 0, nodes: [], lines: [] };
+      }
+
+      const p1IsBaseFamily = basePersonIds.includes(p1.id);
+      const p2IsBaseFamily = basePersonIds.includes(p2.id);
+
+      let leftPerson = p1;
+      let rightPerson = p2;
+
+      // 選択中の家系に元から所属している人を左にする
+      if (!p1IsBaseFamily && p2IsBaseFamily) {
+        leftPerson = p2;
+        rightPerson = p1;
+      }
 
       const children = childrenOfCouple(r.id);
 
@@ -607,8 +743,8 @@ function PersonTreeContent() {
       const y = PAGE_MARGIN + generation * GENERATION_GAP;
       const p2X = unitX + PERSON_W + COUPLE_GAP;
 
-      const p1Pos = addNode(p1, unitX, y, center?.id === p1.id);
-      const p2Pos = addNode(p2, p2X, y, center?.id === p2.id);
+      const p1Pos = addNode(leftPerson, unitX, y, center?.id === leftPerson.id);
+      const p2Pos = addNode(rightPerson, p2X, y, center?.id === rightPerson.id);
 
       const leftX = Math.min(p1Pos.x, p2Pos.x);
       const rightX = Math.max(p1Pos.x, p2Pos.x);
@@ -625,8 +761,6 @@ function PersonTreeContent() {
         const unitCenter = unitX + ownUnitWidth() / 2;
         const parentBottom = y + PERSON_H;
         const jointY = parentBottom + 28;
-
-        addLine(unitCenter, parentBottom, unitCenter, jointY, "parent");
 
         const actualChildCenters: number[] = [];
 
@@ -653,11 +787,25 @@ function PersonTreeContent() {
           if (pos) {
             const centerX = pos.x + PERSON_W / 2;
             actualChildCenters.push(centerX);
+
+            // 子の中心へ縦線
             addLine(centerX, jointY, centerX, pos.y, "parent");
           }
         });
 
-        if (actualChildCenters.length >= 2) {
+        if (actualChildCenters.length === 1) {
+          const childCenter = actualChildCenters[0];
+
+          // 親夫婦の中央から下へ
+          addLine(unitCenter, parentBottom, unitCenter, jointY, "parent");
+
+          // 親夫婦の中央から子の中央へ横線
+          addLine(unitCenter, jointY, childCenter, jointY, "sibling");
+        } else if (actualChildCenters.length >= 2) {
+          // 親夫婦の中央から下へ
+          addLine(unitCenter, parentBottom, unitCenter, jointY, "parent");
+
+          // 兄弟線
           addLine(
             Math.min(...actualChildCenters),
             jointY,
@@ -669,75 +817,70 @@ function PersonTreeContent() {
       }
     }
 
-    let roots: Relation[] = [];
+      let roots: Relation[] = [];
 
-    if (center) {
-      const rootMap = new Map<string, Relation>();
+      if (center) {
+        const rootMap = new Map<string, Relation>();
 
-      topAncestorRelationsForPerson(center.id).forEach((r) => rootMap.set(r.id, r));
+        topAncestorRelationsForPerson(center.id).forEach((r) => rootMap.set(r.id, r));
 
-      spouseRelationsOf(center.id).forEach((sr) => {
-        const otherId = sr.person1_id === center.id ? sr.person2_id : sr.person1_id;
-        topAncestorRelationsForPerson(otherId).forEach((r) => rootMap.set(r.id, r));
-      });
+        spouseRelationsOf(center.id).forEach((sr) => {
+          const otherId = sr.person1_id === center.id ? sr.person2_id : sr.person1_id;
+          topAncestorRelationsForPerson(otherId).forEach((r) => rootMap.set(r.id, r));
+        });
 
-      roots = Array.from(rootMap.values());
-    }
-
-    if (roots.length === 0 && center) {
-      const ownRels = spouseRelationsOf(center.id);
-      if (ownRels.length > 0) {
-        roots = ownRels;
+        roots = Array.from(rootMap.values());
       }
-    }
 
-    if (roots.length === 0 && center) {
-      layoutPersonOnly(center, PAGE_MARGIN, 0);
-    } else {
-      let cursorX = PAGE_MARGIN;
+      if (roots.length === 0 && center) {
+        const ownRels = spouseRelationsOf(center.id);
+        if (ownRels.length > 0) {
+          roots = ownRels;
+        }
+      }
 
-      roots.forEach((r) => {
-        const width = measureRelation(r);
-        layoutRelation(r, cursorX, 0);
-        cursorX += width + BRANCH_GAP;
-      });
-    }
+      if (roots.length === 0 && center) {
+        layoutPersonOnly(center, PAGE_MARGIN, 0);
+      } else {
+        let cursorX = PAGE_MARGIN;
 
-    const maxX = Math.max(
-      PAGE_MARGIN + 400,
-      ...nodes.map((n) => n.x + PERSON_W),
-      ...lines.map((l) => Math.max(l.x1, l.x2))
-    );
+        roots.forEach((r) => {
+          const width = measureRelation(r);
+          layoutRelation(r, cursorX, 0);
+          cursorX += width + BRANCH_GAP;
+        });
+      }
 
-    const maxY = Math.max(
-      PAGE_MARGIN + 400,
-      ...nodes.map((n) => n.y + PERSON_H),
-      ...lines.map((l) => Math.max(l.y1, l.y2))
-    );
+      const maxX = Math.max(
+        PAGE_MARGIN + 400,
+        ...nodes.map((n) => n.x + PERSON_W),
+        ...lines.map((l) => Math.max(l.x1, l.x2))
+      );
 
-    return {
-      nodes,
-      lines,
-      width: maxX + PAGE_MARGIN,
-      height: maxY + PAGE_MARGIN,
-    };
-  }, [center, people, relations, coupleChildren, personMap]);
+      const maxY = Math.max(
+        PAGE_MARGIN + 400,
+        ...nodes.map((n) => n.y + PERSON_H),
+        ...lines.map((l) => Math.max(l.y1, l.y2))
+      );
+
+      return {
+        nodes,
+        lines,
+        width: maxX + PAGE_MARGIN,
+        height: maxY + PAGE_MARGIN,
+      };
+    }, [center, people, relations, coupleChildren, personMap, basePersonIds]);
 
   function PersonCard({ node }: { node: NodeItem }) {
     return (
       <div
-        className={[
-          "absolute flex items-center justify-center rounded-lg border text-white shadow-lg",
-          node.active
-            ? "border-blue-400 bg-blue-950/70"
-            : "border-amber-400/80 bg-neutral-950",
-        ].join(" ")}
+        className="absolute flex items-center justify-center rounded-lg border border-amber-400/80 bg-neutral-950 text-white shadow-lg"
         style={{
           left: node.x,
           top: node.y,
           width: PERSON_W,
           height: PERSON_H,
-          padding: 2,
+          padding: 0,
         }}
       >
         <div
@@ -789,24 +932,35 @@ function PersonTreeContent() {
         ) : (
           <div className="relative" style={{ width: layout.width, height: layout.height }}>
             <svg className="absolute left-0 top-0" width={layout.width} height={layout.height}>
-              {layout.lines.map((l, i) => (
-                <line
-                  key={i}
-                  x1={l.x1}
-                  y1={l.y1}
-                  x2={l.x2}
-                  y2={l.y2}
-                  stroke={
-                    l.kind === "spouse"
-                      ? "#facc15"
-                      : l.kind === "divorced"
-                        ? "#fb7185"
-                        : "rgba(255,255,255,0.85)"
-                  }
-                  strokeWidth={l.kind === "spouse" || l.kind === "divorced" ? 3 : 2}
-                  strokeDasharray={l.kind === "divorced" ? "6 6" : undefined}
-                />
-              ))}
+              {[...layout.lines]
+                .sort((a, b) => {
+                  const order = {
+                    parent: 1,
+                    sibling: 1,
+                    spouse: 2,
+                    divorced: 2,
+                  } as Record<LineItem["kind"], number>;
+
+                  return order[a.kind] - order[b.kind];
+                })
+                .map((l, i) => (
+                  <line
+                    key={i}
+                    x1={l.x1}
+                    y1={l.y1}
+                    x2={l.x2}
+                    y2={l.y2}
+                    stroke={
+                      l.kind === "spouse"
+                        ? "#facc15"
+                        : l.kind === "divorced"
+                          ? "#fb7185"
+                          : "rgba(255,255,255,0.85)"
+                    }
+                    strokeWidth={l.kind === "spouse" || l.kind === "divorced" ? 3 : 2}
+                    strokeDasharray={l.kind === "divorced" ? "6 6" : undefined}
+                  />
+                ))}
             </svg>
 
             {layout.nodes.map((node) => (

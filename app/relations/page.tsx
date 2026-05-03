@@ -11,6 +11,7 @@ type Person = {
 
 type Relation = {
   id: string;
+  family_id: string;
   relation_type: string;
   person1_id: string;
   person2_id: string;
@@ -20,6 +21,7 @@ type Relation = {
 
 type CoupleChild = {
   id: string;
+  family_id: string;
   relationship_id: string;
   child_id: string;
   display_order: number | null;
@@ -43,6 +45,7 @@ export default function RelationsPage() {
 
   const [editingRelationId, setEditingRelationId] = useState<string | null>(null);
   const [editRelation, setEditRelation] = useState({
+    family_id: "",
     person1_id: "",
     person2_id: "",
     relation_type: "spouse",
@@ -50,6 +53,7 @@ export default function RelationsPage() {
 
   const [editingChildId, setEditingChildId] = useState<string | null>(null);
   const [editChild, setEditChild] = useState({
+    family_id: "",
     relationship_id: "",
     child_id: "",
     display_order: "",
@@ -65,24 +69,29 @@ export default function RelationsPage() {
   }, []);
 
   async function loadFamilies() {
-    const { data: memberData } = await supabase
+    const { data: memberData, error } = await supabase
       .from("family_members")
       .select("family_id");
 
-    if (!memberData) return;
+    if (error || !memberData || memberData.length === 0) {
+      setMessage("参加中の家系グループが見つかりません。");
+      return;
+    }
 
-    const ids = Array.from(new Set(memberData.map(x => x.family_id)));
+    const ids = Array.from(new Set(memberData.map((x) => x.family_id)));
 
     const { data: families } = await supabase
       .from("families")
-      .select("id,name")
+      .select("id, name")
       .in("id", ids);
 
     setFamilyOptions(families ?? []);
 
     if (families && families.length > 0) {
-      setSelectedFamilyId(families[0].id);
-      loadRelations(families[0].id);
+      const fid = families[0].id;
+      setSelectedFamilyId(fid);
+      setFamilyId(fid);
+      await reloadAll(fid);
     }
   }
 
@@ -94,18 +103,26 @@ export default function RelationsPage() {
 
   async function loadPeople(fid: string) {
     const { data, error } = await supabase
-      .from("people")
-      .select("id, name")
-      .eq("family_id", selectedFamilyId)
-      .is("deleted_at", null)
-      .order("kana", { ascending: true });
+      .from("person_families")
+      .select(`
+      person:people(
+        id,
+        name
+      )
+    `)
+      .eq("family_id", fid);
 
     if (error) {
       setMessage(error.message);
       return;
     }
 
-    setPeople(data ?? []);
+    const list = (data ?? [])
+      .map((x: any) => x.person)
+      .filter(Boolean)
+      .sort((a: Person, b: Person) => a.name.localeCompare(b.name, "ja"));
+
+    setPeople(list);
   }
 
   async function loadRelations(fid: string) {
@@ -113,13 +130,14 @@ export default function RelationsPage() {
       .from("relationships")
       .select(`
         id,
+        family_id,
         relation_type,
         person1_id,
         person2_id,
         person1:person1_id(id, name),
         person2:person2_id(id, name)
       `)
-      .eq("family_id", selectedFamilyId)
+      .eq("family_id", fid)
       .is("deleted_at", null)
       .order("created_at", { ascending: true });
 
@@ -135,21 +153,23 @@ export default function RelationsPage() {
     const { data, error } = await supabase
       .from("couple_children")
       .select(`
-        id,
-        relationship_id,
-        child_id,
-        display_order,
-        child:child_id(id, name),
-        relationship:relationship_id(
-          id,
-          relation_type,
-          person1_id,
-          person2_id,
-          person1:person1_id(id, name),
-          person2:person2_id(id, name)
-        )
-      `)
-      .eq("family_id", selectedFamilyId)
+  id,
+  family_id,
+  relationship_id,
+  child_id,
+  display_order,
+  child:child_id(id, name),
+  relationship:relationship_id(
+    id,
+    family_id,
+    relation_type,
+    person1_id,
+    person2_id,
+    person1:person1_id(id, name),
+    person2:person2_id(id, name)
+  )
+`)
+      .eq("family_id", fid)
       .is("deleted_at", null)
       .order("display_order", { ascending: true });
 
@@ -248,6 +268,7 @@ export default function RelationsPage() {
   function startEditRelation(r: Relation) {
     setEditingRelationId(r.id);
     setEditRelation({
+      family_id: r.family_id,
       person1_id: r.person1_id,
       person2_id: r.person2_id,
       relation_type: r.relation_type,
@@ -256,6 +277,11 @@ export default function RelationsPage() {
 
   async function saveEditRelation() {
     if (!familyId || !editingRelationId) return;
+
+    if (!editRelation.family_id) {
+      setMessage("家系グループを選択してください。");
+      return;
+    }
 
     if (!editRelation.person1_id || !editRelation.person2_id) {
       setMessage("人物を2人選択してください。");
@@ -270,6 +296,7 @@ export default function RelationsPage() {
     const { error } = await supabase
       .from("relationships")
       .update({
+        family_id: editRelation.family_id,
         person1_id: editRelation.person1_id,
         person2_id: editRelation.person2_id,
         relation_type: editRelation.relation_type,
@@ -281,9 +308,24 @@ export default function RelationsPage() {
       return;
     }
 
+    const { error: childError } = await supabase
+      .from("couple_children")
+      .update({
+        family_id: editRelation.family_id,
+      })
+      .eq("relationship_id", editingRelationId);
+
+    if (childError) {
+      setMessage(childError.message);
+      return;
+    }
+
     setEditingRelationId(null);
     setMessage("関係を更新しました。");
-    await reloadAll(familyId);
+
+    if (selectedFamilyId) {
+      await reloadAll(selectedFamilyId);
+    }
   }
 
   async function deleteRelation(id: string) {
@@ -308,6 +350,7 @@ export default function RelationsPage() {
   function startEditChild(cc: CoupleChild) {
     setEditingChildId(cc.id);
     setEditChild({
+      family_id: cc.family_id,
       relationship_id: cc.relationship_id,
       child_id: cc.child_id,
       display_order: cc.display_order ? String(cc.display_order) : "",
@@ -325,6 +368,7 @@ export default function RelationsPage() {
     const { error } = await supabase
       .from("couple_children")
       .update({
+        family_id: editChild.family_id,
         relationship_id: editChild.relationship_id,
         child_id: editChild.child_id,
         display_order: editChild.display_order ? Number(editChild.display_order) : null,
@@ -373,10 +417,15 @@ export default function RelationsPage() {
         <select
           className="mt-4 w-full rounded-xl bg-neutral-800 p-3"
           value={selectedFamilyId}
-          onChange={(e) => {
-            setSelectedFamilyId(e.target.value);
-            loadRelations(e.target.value);
-            loadPeople(e.target.value); // 人物も切替
+          onChange={async (e) => {
+            const fid = e.target.value;
+            setSelectedFamilyId(fid);
+            setFamilyId(fid);
+            setPerson1Id("");
+            setPerson2Id("");
+            setSelectedCoupleId("");
+            setChildId("");
+            await reloadAll(fid);
           }}
         >
           {familyOptions.map(f => (
@@ -441,23 +490,73 @@ export default function RelationsPage() {
               <div key={r.id} className="rounded-xl bg-neutral-800 p-3 text-sm">
                 {editingRelationId === r.id ? (
                   <>
-                    <select className="w-full rounded bg-neutral-700 p-2" value={editRelation.person1_id} onChange={(e) => setEditRelation({ ...editRelation, person1_id: e.target.value })}>
-                      {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    <select
+                      className="mb-2 w-full rounded bg-neutral-700 p-2"
+                      value={editRelation.family_id}
+                      onChange={(e) =>
+                        setEditRelation({
+                          ...editRelation,
+                          family_id: e.target.value,
+                        })
+                      }
+                    >
+                      {familyOptions.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
                     </select>
 
-                    <select className="mt-2 w-full rounded bg-neutral-700 p-2" value={editRelation.relation_type} onChange={(e) => setEditRelation({ ...editRelation, relation_type: e.target.value })}>
+                    <select
+                      className="w-full rounded bg-neutral-700 p-2"
+                      value={editRelation.person1_id}
+                      onChange={(e) =>
+                        setEditRelation({ ...editRelation, person1_id: e.target.value })
+                      }
+                    >
+                      {people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      className="mt-2 w-full rounded bg-neutral-700 p-2"
+                      value={editRelation.relation_type}
+                      onChange={(e) =>
+                        setEditRelation({ ...editRelation, relation_type: e.target.value })
+                      }
+                    >
                       <option value="spouse">夫婦</option>
                       <option value="divorced">離縁・離婚</option>
                     </select>
 
-                    <select className="mt-2 w-full rounded bg-neutral-700 p-2" value={editRelation.person2_id} onChange={(e) => setEditRelation({ ...editRelation, person2_id: e.target.value })}>
-                      {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    <select
+                      className="mt-2 w-full rounded bg-neutral-700 p-2"
+                      value={editRelation.person2_id}
+                      onChange={(e) =>
+                        setEditRelation({ ...editRelation, person2_id: e.target.value })
+                      }
+                    >
+                      {people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
                     </select>
 
-                    <button onClick={saveEditRelation} className="mt-3 w-full rounded bg-green-600 p-2 font-semibold">
+                    <button
+                      onClick={saveEditRelation}
+                      className="mt-3 w-full rounded bg-green-600 p-2 font-semibold"
+                    >
                       保存
                     </button>
-                    <button onClick={() => setEditingRelationId(null)} className="mt-2 w-full rounded bg-neutral-600 p-2">
+
+                    <button
+                      onClick={() => setEditingRelationId(null)}
+                      className="mt-2 w-full rounded bg-neutral-600 p-2"
+                    >
                       キャンセル
                     </button>
                   </>
@@ -495,20 +594,72 @@ export default function RelationsPage() {
               <div key={cc.id} className="rounded-xl bg-neutral-800 p-3 text-sm">
                 {editingChildId === cc.id ? (
                   <>
-                    <select className="w-full rounded bg-neutral-700 p-2" value={editChild.relationship_id} onChange={(e) => setEditChild({ ...editChild, relationship_id: e.target.value })}>
-                      {coupleRelations.map((r) => <option key={r.id} value={r.id}>{coupleLabel(r)}</option>)}
+                    <select
+                      className="mb-2 w-full rounded bg-neutral-700 p-2"
+                      value={editChild.family_id}
+                      onChange={(e) =>
+                        setEditChild({
+                          ...editChild,
+                          family_id: e.target.value,
+                        })
+                      }
+                    >
+                      {familyOptions.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
                     </select>
 
-                    <select className="mt-2 w-full rounded bg-neutral-700 p-2" value={editChild.child_id} onChange={(e) => setEditChild({ ...editChild, child_id: e.target.value })}>
-                      {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    <select
+                      className="w-full rounded bg-neutral-700 p-2"
+                      value={editChild.relationship_id}
+                      onChange={(e) =>
+                        setEditChild({ ...editChild, relationship_id: e.target.value })
+                      }
+                    >
+                      {coupleRelations.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {coupleLabel(r)}
+                        </option>
+                      ))}
                     </select>
 
-                    <input className="mt-2 w-full rounded bg-neutral-700 p-2" type="number" placeholder="兄弟順" value={editChild.display_order} onChange={(e) => setEditChild({ ...editChild, display_order: e.target.value })} />
+                    <select
+                      className="mt-2 w-full rounded bg-neutral-700 p-2"
+                      value={editChild.child_id}
+                      onChange={(e) =>
+                        setEditChild({ ...editChild, child_id: e.target.value })
+                      }
+                    >
+                      {people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
 
-                    <button onClick={saveEditChild} className="mt-3 w-full rounded bg-green-600 p-2 font-semibold">
+                    <input
+                      className="mt-2 w-full rounded bg-neutral-700 p-2"
+                      type="number"
+                      placeholder="兄弟順"
+                      value={editChild.display_order}
+                      onChange={(e) =>
+                        setEditChild({ ...editChild, display_order: e.target.value })
+                      }
+                    />
+
+                    <button
+                      onClick={saveEditChild}
+                      className="mt-3 w-full rounded bg-green-600 p-2 font-semibold"
+                    >
                       保存
                     </button>
-                    <button onClick={() => setEditingChildId(null)} className="mt-2 w-full rounded bg-neutral-600 p-2">
+
+                    <button
+                      onClick={() => setEditingChildId(null)}
+                      className="mt-2 w-full rounded bg-neutral-600 p-2"
+                    >
                       キャンセル
                     </button>
                   </>
@@ -519,9 +670,7 @@ export default function RelationsPage() {
                         {cc.relationship?.person1?.name} ─ {cc.relationship?.person2?.name}
                       </span>
                       <span className="mx-1 text-neutral-400">＞</span>
-                      <span>
-                        {cc.child?.name ?? "不明"}
-                      </span>
+                      <span>{cc.child?.name ?? "不明"}</span>
                     </div>
 
                     <button
@@ -543,9 +692,9 @@ export default function RelationsPage() {
             ))}
           </div>
         </div>
-      </div>
 
-      <BottomNav />
+        <BottomNav />
+      </div>
     </main>
   );
 }
