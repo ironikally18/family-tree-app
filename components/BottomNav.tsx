@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const items = [
   { href: "/", label: "ホーム" },
   { href: "/person-tree", label: "家系図" },
+  { href: "/ancestor-tree", label: "先祖" },
   { href: "/people", label: "人登録" },
   { href: "/relations", label: "関係登録" },
   { href: "/invite", label: "招待" },
