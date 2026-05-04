@@ -44,10 +44,10 @@ type AncestorLine = {
   y2: number;
 };
 
-const CARD_W = 72;
-const CARD_H = 150;
-const X_GAP = 48;
-const Y_GAP = 90;
+const CARD_W = 48;
+const CARD_H = 200;
+const X_GAP = 60;
+const Y_GAP = 70;
 const PAGE_MARGIN = 40;
 
 function wareki(dateText: string | null) {
@@ -90,6 +90,24 @@ function wareki(dateText: string | null) {
 function birthText(p: Person) {
   if (!p.birth_date) return "";
   return `${p.birth_date} / ${wareki(p.birth_date)}`;
+}
+
+function westernBirthFull(p: Person) {
+  if (!p.birth_date) return "";
+
+  const d = new Date(`${p.birth_date}T00:00:00`);
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+
+  return `${y}年${m}月${day}日`;
+}
+
+function warekiBirthYear(p: Person) {
+  if (!p.birth_date) return "";
+
+  const w = wareki(p.birth_date);
+  return w.replace(/年.*$/, "年");
 }
 
 export default function AncestorTreePage() {
@@ -142,85 +160,51 @@ export default function AncestorTreePage() {
   async function loadFamilyData(fid: string) {
     setMessage("");
 
-    const { data: peopleLinkData, error: peopleError } = await supabase
-      .from("person_families")
-      .select(`
-        person:people(
-          id,
-          name,
-          kana,
-          birth_date
-        )
-      `)
-      .eq("family_id", fid);
+    const { data: peopleData, error: peopleError } = await supabase
+      .from("people")
+      .select("id, name, kana, birth_date")
+      .is("deleted_at", null);
 
     if (peopleError) {
       setMessage(peopleError.message);
       return;
     }
 
-    const basePeople = (peopleLinkData ?? [])
-      .map((x: any) => x.person)
-      .filter(Boolean) as Person[];
-
-    const baseIds = Array.from(new Set(basePeople.map((p) => p.id)));
-
-    let rels: Relation[] = [];
-    let ccs: CoupleChild[] = [];
-
-    if (baseIds.length > 0) {
-      const { data: relData } = await supabase
-        .from("relationships")
-        .select("id, family_id, relation_type, person1_id, person2_id")
-        .or(
-          `person1_id.in.(${baseIds.join(",")}),person2_id.in.(${baseIds.join(",")})`
-        )
-        .is("deleted_at", null);
-
-      rels = ((relData ?? []) as Relation[]).filter(
-        (r) => r.relation_type === "spouse" || r.relation_type === "divorced"
-      );
-
-      const relIds = rels.map((r) => r.id);
-
-      if (relIds.length > 0) {
-        const { data: ccData } = await supabase
-          .from("couple_children")
-          .select("id, relationship_id, child_id")
-          .in("relationship_id", relIds)
-          .is("deleted_at", null);
-
-        ccs = (ccData ?? []) as CoupleChild[];
-      }
-    }
-
-    const allIds = Array.from(
-      new Set([
-        ...baseIds,
-        ...rels.flatMap((r) => [r.person1_id, r.person2_id]),
-        ...ccs.map((cc) => cc.child_id),
-      ])
+    const allPeople = ((peopleData ?? []) as Person[]).sort((a, b) =>
+      (a.kana || a.name).localeCompare(b.kana || b.name, "ja")
     );
 
-    let allPeople: Person[] = [];
+    const { data: relData, error: relError } = await supabase
+      .from("relationships")
+      .select("id, family_id, relation_type, person1_id, person2_id")
+      .is("deleted_at", null);
 
-    if (allIds.length > 0) {
-      const { data } = await supabase
-        .from("people")
-        .select("id, name, kana, birth_date")
-        .in("id", allIds)
-        .is("deleted_at", null);
-
-      allPeople = ((data ?? []) as Person[]).sort((a, b) =>
-        (a.kana || a.name).localeCompare(b.kana || b.name, "ja")
-      );
+    if (relError) {
+      setMessage(relError.message);
+      return;
     }
+
+    const rels = ((relData ?? []) as Relation[]).filter(
+      (r) => r.relation_type === "spouse" || r.relation_type === "divorced"
+    );
+
+    const { data: ccData, error: ccError } = await supabase
+      .from("couple_children")
+      .select("id, relationship_id, child_id")
+      .is("deleted_at", null);
+
+    if (ccError) {
+      setMessage(ccError.message);
+      return;
+    }
+
+    const ccs = (ccData ?? []) as CoupleChild[];
 
     setPeople(allPeople);
     setRelations(rels);
     setCoupleChildren(ccs);
 
-    setSelectedPersonId(basePeople[0]?.id ?? "");
+    setSelectedPersonId(allPeople[0]?.id ?? "");
   }
 
   const personMap = useMemo(() => {
@@ -259,98 +243,126 @@ export default function AncestorTreePage() {
   const tree = useMemo(() => {
     if (!selectedPersonId) {
       return {
-        nodes: [] as AncestorNode[],
+        nodes: [] as (AncestorNode & { key: string })[],
         lines: [] as AncestorLine[],
         width: 400,
         height: 400,
       };
     }
 
-    const levels: Person[][] = [];
-    const visited = new Set<string>();
-
-    let current = [personMap.get(selectedPersonId)].filter(Boolean) as Person[];
-    let generation = 0;
-
-    while (current.length > 0 && generation < 12) {
-      levels.push(current);
-
-      const nextMap = new Map<string, Person>();
-
-      current.forEach((p) => {
-        visited.add(p.id);
-
-        parentsOf(p.id).forEach((parent) => {
-          if (!visited.has(parent.id)) {
-            nextMap.set(parent.id, parent);
-          }
-        });
-      });
-
-      current = Array.from(nextMap.values());
-      generation += 1;
+    const selected = personMap.get(selectedPersonId);
+    if (!selected) {
+      return {
+        nodes: [] as (AncestorNode & { key: string })[],
+        lines: [] as AncestorLine[],
+        width: 400,
+        height: 400,
+      };
     }
 
-    const reversed = [...levels].reverse();
+    function getParents(personId: string) {
+      return parentsOf(personId).slice(0, 2);
+    }
 
-    const maxCount = Math.max(1, ...reversed.map((level) => level.length));
-    const width = Math.max(
-      420,
-      PAGE_MARGIN * 2 + maxCount * CARD_W + Math.max(0, maxCount - 1) * X_GAP
-    );
+    function measureWidth(person: Person, seen = new Set<string>()): number {
+      if (seen.has(person.id)) return CARD_W;
 
-    const nodes: AncestorNode[] = [];
+      const nextSeen = new Set(seen);
+      nextSeen.add(person.id);
 
-    reversed.forEach((level, rowIndex) => {
-      const rowWidth =
-        level.length * CARD_W + Math.max(0, level.length - 1) * X_GAP;
+      const parents = getParents(person.id);
 
-      let x = width / 2 - rowWidth / 2;
-      const y = PAGE_MARGIN + rowIndex * (CARD_H + Y_GAP);
+      if (parents.length === 0) return CARD_W;
 
-      level.forEach((p) => {
-        nodes.push({
-          person: p,
-          generation: reversed.length - 1 - rowIndex,
-          x,
-          y,
-        });
-        x += CARD_W + X_GAP;
-      });
-    });
+      const parentWidth =
+        parents.reduce((sum, p) => sum + measureWidth(p, nextSeen), 0) +
+        X_GAP * Math.max(0, parents.length - 1);
 
-    const nodeById = new Map(nodes.map((n) => [n.person.id, n]));
+      return Math.max(CARD_W, parentWidth);
+    }
+
+    function measureDepth(person: Person, seen = new Set<string>()): number {
+      if (seen.has(person.id)) return 0;
+
+      const nextSeen = new Set(seen);
+      nextSeen.add(person.id);
+
+      const parents = getParents(person.id);
+      if (parents.length === 0) return 0;
+
+      return 1 + Math.max(...parents.map((p) => measureDepth(p, nextSeen)));
+    }
+
+    const totalWidth = measureWidth(selected);
+    const maxDepth = measureDepth(selected);
+
+    const nodes: (AncestorNode & { key: string })[] = [];
     const lines: AncestorLine[] = [];
 
-    nodes.forEach((childNode) => {
-      const parents = parentsOf(childNode.person.id)
-        .map((p) => nodeById.get(p.id))
-        .filter((n): n is AncestorNode => Boolean(n));
+    function placePerson(
+      person: Person,
+      xStart: number,
+      generationFromBottom: number,
+      path: string
+    ) {
+      const subtreeWidth = measureWidth(person);
+      const x = xStart + subtreeWidth / 2 - CARD_W / 2;
+      const y =
+        PAGE_MARGIN +
+        (maxDepth - generationFromBottom) * (CARD_H + Y_GAP);
 
-      if (parents.length === 0) return;
+      const node = {
+        key: `${path}-${person.id}`,
+        person,
+        generation: generationFromBottom,
+        x,
+        y,
+      };
 
-      const childTopX = childNode.x + CARD_W / 2;
-      const childTopY = childNode.y;
+      nodes.push(node);
 
-      if (parents.length === 1) {
-        const p = parents[0];
-        const px = p.x + CARD_W / 2;
-        const py = p.y + CARD_H;
+      const parents = getParents(person.id);
+      if (parents.length === 0) return node;
 
+      const parentWidths = parents.map((p) => measureWidth(p));
+      const parentsTotalWidth =
+        parentWidths.reduce((sum, w) => sum + w, 0) +
+        X_GAP * Math.max(0, parents.length - 1);
+
+      let parentCursor = xStart + subtreeWidth / 2 - parentsTotalWidth / 2;
+
+      const parentNodes = parents.map((p, index) => {
+        const placed = placePerson(
+          p,
+          parentCursor,
+          generationFromBottom + 1,
+          `${path}-${index}`
+        );
+
+        parentCursor += parentWidths[index] + X_GAP;
+        return placed;
+      });
+
+      const childTopX = x + CARD_W / 2;
+      const childTopY = y;
+
+      if (parentNodes.length === 1) {
+        const p = parentNodes[0];
         lines.push({
-          x1: px,
-          y1: py,
+          x1: p.x + CARD_W / 2,
+          y1: p.y + CARD_H,
           x2: childTopX,
           y2: childTopY,
         });
-      } else {
-        const p1 = parents[0];
-        const p2 = parents[1];
+      }
+
+      if (parentNodes.length >= 2) {
+        const p1 = parentNodes[0];
+        const p2 = parentNodes[1];
 
         const p1x = p1.x + CARD_W / 2;
         const p2x = p2.x + CARD_W / 2;
         const py = Math.max(p1.y + CARD_H, p2.y + CARD_H);
-
         const jointY = py + 28;
 
         lines.push({ x1: p1x, y1: py, x2: p1x, y2: jointY });
@@ -368,10 +380,17 @@ export default function AncestorTreePage() {
           y2: childTopY,
         });
       }
-    });
 
+      return node;
+    }
+
+    placePerson(selected, PAGE_MARGIN, 0, "root");
+
+    const width = Math.max(500, totalWidth + PAGE_MARGIN * 2);
     const height =
-      PAGE_MARGIN * 2 + reversed.length * CARD_H + Math.max(0, reversed.length - 1) * Y_GAP;
+      PAGE_MARGIN * 2 +
+      (maxDepth + 1) * CARD_H +
+      maxDepth * Y_GAP;
 
     return { nodes, lines, width, height };
   }, [selectedPersonId, personMap, relations, coupleChildren]);
@@ -440,7 +459,7 @@ export default function AncestorTreePage() {
 
             {tree.nodes.map((n) => (
               <div
-                key={n.person.id}
+                key={n.key}
                 className="absolute flex flex-col items-center justify-center rounded-lg border border-sky-400 bg-neutral-950 text-white"
                 style={{
                   left: n.x,
@@ -450,7 +469,7 @@ export default function AncestorTreePage() {
                 }}
               >
                 <div
-                  className="text-base font-bold leading-none"
+                  className="text-lg font-bold leading-none"
                   style={{
                     writingMode: "vertical-rl",
                     textOrientation: "upright",
@@ -460,8 +479,31 @@ export default function AncestorTreePage() {
                 </div>
 
                 {n.person.birth_date && (
-                  <div className="mt-1 text-[10px] text-neutral-300">
-                    {birthText(n.person)}
+                  <div
+                    className="absolute flex gap-1 text-base font-bold leading-none text-neutral-300"
+                    style={{
+                      right: -45,
+                      top: 0,
+                      height: CARD_H,
+                    }}
+                  >
+                    <div
+                      style={{
+                        writingMode: "vertical-rl",
+                        textOrientation: "upright",
+                      }}
+                    >
+                      {westernBirthFull(n.person)}
+                    </div>
+
+                    <div
+                      style={{
+                        writingMode: "vertical-rl",
+                        textOrientation: "upright",
+                      }}
+                    >
+                      {warekiBirthYear(n.person)}
+                    </div>
                   </div>
                 )}
               </div>
