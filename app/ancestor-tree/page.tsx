@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import BottomNav from "../../components/BottomNav";
 
+
+
 type Person = {
   id: string;
   name: string;
@@ -45,8 +47,8 @@ type AncestorLine = {
 };
 
 const CARD_W = 48;
-const CARD_H = 200;
-const X_GAP = 60;
+const CARD_H = 150;
+const X_GAP = 68;
 const Y_GAP = 70;
 const PAGE_MARGIN = 40;
 
@@ -92,15 +94,21 @@ function birthText(p: Person) {
   return `${p.birth_date} / ${wareki(p.birth_date)}`;
 }
 
-function westernBirthFull(p: Person) {
+function westernBirthYear(p: Person) {
   if (!p.birth_date) return "";
 
   const d = new Date(`${p.birth_date}T00:00:00`);
-  const y = d.getFullYear();
+  return `${d.getFullYear()}年`;
+}
+
+function westernBirthMD(p: Person) {
+  if (!p.birth_date) return "";
+
+  const d = new Date(`${p.birth_date}T00:00:00`);
   const m = d.getMonth() + 1;
   const day = d.getDate();
 
-  return `${y}年${m}月${day}日`;
+  return `${m}月${day}日`;
 }
 
 function warekiBirthYear(p: Person) {
@@ -395,6 +403,35 @@ export default function AncestorTreePage() {
     return { nodes, lines, width, height };
   }, [selectedPersonId, personMap, relations, coupleChildren]);
 
+  function handlePrint() {
+    const printArea = document.querySelector(".print-area") as HTMLElement;
+    const treeInner = document.querySelector(".tree-print-inner") as HTMLElement;
+
+    if (!printArea || !treeInner) return;
+
+    const treeWidth = treeInner.scrollWidth;
+    const treeHeight = treeInner.scrollHeight;
+
+    // A4横・余白6mm想定。少し小さめにする
+    const A4_WIDTH = 980;
+    const A4_HEIGHT = 680;
+
+    const scale = Math.min(A4_WIDTH / treeWidth, A4_HEIGHT / treeHeight, 1) * 0.94;
+
+    printArea.style.width = `${treeWidth * scale}px`;
+    printArea.style.height = `${treeHeight * scale}px`;
+
+    treeInner.style.transform = `scale(${scale})`;
+    treeInner.style.transformOrigin = "top left";
+
+    window.print();
+
+    printArea.style.width = "";
+    printArea.style.height = "";
+    treeInner.style.transform = "";
+    treeInner.style.transformOrigin = "";
+  }
+
   return (
     <main className="min-h-screen bg-neutral-950 p-5 pb-24 text-white">
       <div className="mx-auto max-w-md">
@@ -429,6 +466,13 @@ export default function AncestorTreePage() {
           ))}
         </select>
 
+        <button
+          onClick={handlePrint}
+          className="mt-3 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold print:hidden"
+        >
+          PDF出力
+        </button>
+
         {message && (
           <div className="mt-4 rounded-xl bg-neutral-800 p-3 text-sm">
             {message}
@@ -436,13 +480,16 @@ export default function AncestorTreePage() {
         )}
       </div>
 
-      <div className="mt-5 overflow-auto rounded-2xl border border-neutral-700 bg-neutral-900 p-5">
+      <div className="print-area mt-5 overflow-auto rounded-2xl border border-neutral-700 bg-neutral-900 p-5">
         {!selectedPersonId ? (
           <div className="p-8 text-center text-sm text-neutral-400">
             人物を選択してください。
           </div>
         ) : (
-          <div className="relative" style={{ width: tree.width, height: tree.height }}>
+          <div
+            className="tree-print-inner relative"
+            style={{ width: tree.width, height: tree.height }}
+          >
             <svg className="absolute left-0 top-0" width={tree.width} height={tree.height}>
               {tree.lines.map((l, i) => (
                 <line
@@ -482,20 +529,32 @@ export default function AncestorTreePage() {
                   <div
                     className="absolute flex gap-1 text-base font-bold leading-none text-neutral-300"
                     style={{
-                      right: -45,
+                      right: -64,
                       top: 0,
                       height: CARD_H,
                     }}
                   >
+                    {/* 月日 */}
                     <div
                       style={{
                         writingMode: "vertical-rl",
                         textOrientation: "upright",
                       }}
                     >
-                      {westernBirthFull(n.person)}
+                      {westernBirthMD(n.person)}
                     </div>
 
+                    {/* 年 */}
+                    <div
+                      style={{
+                        writingMode: "vertical-rl",
+                        textOrientation: "upright",
+                      }}
+                    >
+                      {westernBirthYear(n.person)}
+                    </div>
+
+                    {/* 和暦 */}
                     <div
                       style={{
                         writingMode: "vertical-rl",

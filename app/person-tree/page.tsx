@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import BottomNav from "../../components/BottomNav";
 
+
+
 type Person = {
   id: string;
   name: string;
@@ -407,24 +409,43 @@ function PersonTreeContent() {
   const layout = useMemo(() => {
     const nodes: NodeItem[] = [];
     const lines: LineItem[] = [];
-    const measured = new Map<string, number>();
-    const nodePos = new Map<string, { x: number; y: number }>();
 
-    function addNode(person: Person, x: number, y: number, active = false) {
-      const existing = nodePos.get(person.id);
+    const measuredRelation = new Map<string, number>();
+    const measuredMulti = new Map<string, number>();
+
+    const nodePos = new Map<string, { x: number; y: number }>();
+    const personPos = new Map<string, { x: number; y: number }>();
+
+    const RELATION_GAP = 70;
+    const RELATION_SAFE_PADDING = 36;
+    const DIVORCED_CHILD_OFFSET = 65;
+
+    function addNode(
+      person: Person,
+      x: number,
+      y: number,
+      active = false,
+      nodeKey = person.id
+    ) {
+      const existing = nodePos.get(nodeKey);
       if (existing) return existing;
 
       const pos = { x, y };
 
       nodes.push({
-        key: person.id,
+        key: nodeKey,
         person,
         x,
         y,
         active,
       });
 
-      nodePos.set(person.id, pos);
+      nodePos.set(nodeKey, pos);
+
+      if (!personPos.has(person.id)) {
+        personPos.set(person.id, pos);
+      }
+
       return pos;
     }
 
@@ -444,6 +465,95 @@ function PersonTreeContent() {
       return personMap.get(otherId) ?? null;
     }
 
+    function relationKey(r: Relation, path: Set<string>) {
+      return `${r.id}:${Array.from(path).sort().join(",")}`;
+    }
+
+    function multiKey(person: Person, rels: Relation[], path: Set<string>) {
+      return `${person.id}:${rels.map((r) => r.id).sort().join(",")}:${Array.from(path)
+        .sort()
+        .join(",")}`;
+    }
+
+    function orderRelationsForPerson(person: Person, rels: Relation[]) {
+      const spouseRels = rels.filter((r) => r.relation_type === "spouse");
+      const divorcedRels = rels.filter((r) => r.relation_type === "divorced");
+
+      const mainSpouse = spouseRels[0] ?? null;
+      const otherSpouses = spouseRels.slice(1);
+
+      const leftDivorced = divorcedRels.filter((_, i) => i % 2 === 0);
+      const rightDivorced = divorcedRels.filter((_, i) => i % 2 === 1);
+
+      if (mainSpouse) {
+        return [
+          ...leftDivorced,
+          mainSpouse,
+          ...rightDivorced,
+          ...otherSpouses,
+        ];
+      }
+
+      return divorcedRels.length > 0 ? divorcedRels : rels;
+    }
+
+    function childLayoutInfos(r: Relation, path: Set<string>) {
+      const nextPath = new Set(path);
+      nextPath.add(r.id);
+
+      return childrenOfCouple(r.id).map((child) => {
+        const childRelations = spouseRelationsOf(child.id).filter(
+          (sr) => sr.id !== r.id && !nextPath.has(sr.id)
+        );
+
+        const width =
+          childRelations.length === 0
+            ? PERSON_W
+            : childRelations.length >= 2
+              ? measurePersonWithMultipleRelations(child, childRelations, nextPath)
+              : Math.max(PERSON_W, measureRelation(childRelations[0], nextPath));
+
+        const relation =
+          childRelations.find((cr) => cr.relation_type === "spouse") ??
+          childRelations[0] ??
+          null;
+
+        return {
+          child,
+          width,
+          relations: childRelations,
+          relation,
+        };
+      });
+    }
+
+    function measureChildrenWidth(r: Relation, path: Set<string>) {
+      const infos = childLayoutInfos(r, path);
+
+      if (infos.length === 0) return 0;
+
+      return (
+        infos.reduce((sum, info) => sum + info.width, 0) +
+        SIBLING_GAP * Math.max(0, infos.length - 1)
+      );
+    }
+
+    function measureRelation(r: Relation, path = new Set<string>()): number {
+      const key = relationKey(r, path);
+      if (measuredRelation.has(key)) return measuredRelation.get(key)!;
+      if (path.has(r.id)) return ownUnitWidth();
+
+      const nextPath = new Set(path);
+      nextPath.add(r.id);
+
+      const childrenWidth = measureChildrenWidth(r, nextPath);
+      const width =
+        Math.max(ownUnitWidth(), childrenWidth + RELATION_SAFE_PADDING);
+
+      measuredRelation.set(key, width);
+      return width;
+    }
+
     function measurePersonWithMultipleRelations(
       person: Person,
       rels: Relation[],
@@ -451,53 +561,130 @@ function PersonTreeContent() {
     ): number {
       if (rels.length === 0) return PERSON_W;
 
+      const ordered = orderRelationsForPerson(person, rels);
+      const key = multiKey(person, ordered, path);
+
+      if (measuredMulti.has(key)) return measuredMulti.get(key)!;
+
+      const widths = ordered.map((r) => measureRelation(r, path));
       const total =
-        rels.reduce((sum, r) => sum + measureRelation(r, path), 0) +
-        BRANCH_GAP * Math.max(0, rels.length - 1);
+        widths.reduce((sum, w) => sum + w, 0) +
+        RELATION_GAP * Math.max(0, widths.length - 1);
 
-      return Math.max(PERSON_W, total);
-    }
+      const width = Math.max(PERSON_W, total);
+      measuredMulti.set(key, width);
 
-    function measureRelation(r: Relation, path = new Set<string>()): number {
-      if (measured.has(r.id)) return measured.get(r.id)!;
-      if (path.has(r.id)) return ownUnitWidth();
-
-      const nextPath = new Set(path);
-      nextPath.add(r.id);
-
-      const children = childrenOfCouple(r.id);
-
-      if (children.length === 0) {
-        measured.set(r.id, ownUnitWidth());
-        return ownUnitWidth();
-      }
-
-      const childWidths = children.map((child) => {
-        const childRelations = spouseRelationsOf(child.id).filter(
-          (sr) => sr.id !== r.id && !nextPath.has(sr.id)
-        );
-
-        if (childRelations.length === 0) return PERSON_W;
-
-        if (childRelations.length >= 2) {
-          return measurePersonWithMultipleRelations(child, childRelations, nextPath);
-        }
-
-        return Math.max(PERSON_W, measureRelation(childRelations[0], nextPath));
-      });
-
-      const childrenWidth =
-        childWidths.reduce((sum, w) => sum + w, 0) +
-        SIBLING_GAP * Math.max(0, childWidths.length - 1);
-
-      const width = Math.max(ownUnitWidth(), childrenWidth);
-      measured.set(r.id, width);
       return width;
     }
 
     function layoutPersonOnly(person: Person, xStart: number, generation: number) {
       const y = PAGE_MARGIN + generation * GENERATION_GAP;
       addNode(person, xStart, y, center?.id === person.id);
+    }
+
+    function layoutChildrenFromRelation(
+      r: Relation,
+      parentCenter: number,
+      generation: number,
+      path: Set<string>
+    ) {
+      const infos = childLayoutInfos(r, path);
+      if (infos.length === 0) return;
+
+      const y = PAGE_MARGIN + generation * GENERATION_GAP;
+      const parentBottom = y + PERSON_H;
+      const jointY = parentBottom + 28;
+
+      const childrenTotalWidth =
+        infos.reduce((sum, info) => sum + info.width, 0) +
+        SIBLING_GAP * Math.max(0, infos.length - 1);
+
+      let childCursor = parentCenter - childrenTotalWidth / 2;
+
+      if (r.relation_type === "divorced") {
+        const p1 = personMap.get(r.person1_id);
+        const p2 = personMap.get(r.person2_id);
+
+        const p1Pos = p1 ? personPos.get(p1.id) : null;
+        const p2Pos = p2 ? personPos.get(p2.id) : null;
+
+        if (p1Pos && p2Pos) {
+          const p1Center = p1Pos.x + PERSON_W / 2;
+          const p2Center = p2Pos.x + PERSON_W / 2;
+
+          const relationCenter = (p1Center + p2Center) / 2;
+
+          // 離縁相手が本人より左なら左、右なら右へ逃がす
+          const mainCenter =
+            basePersonIds.includes(r.person1_id) && !basePersonIds.includes(r.person2_id)
+              ? p1Center
+              : basePersonIds.includes(r.person2_id) && !basePersonIds.includes(r.person1_id)
+                ? p2Center
+                : parentCenter;
+
+          const otherCenter =
+            Math.abs(p1Center - mainCenter) > Math.abs(p2Center - mainCenter)
+              ? p1Center
+              : p2Center;
+
+          const divorcedSide = otherCenter < mainCenter ? -1 : 1;
+
+          childCursor =
+            relationCenter -
+            childrenTotalWidth / 2 +
+            divorcedSide * DIVORCED_CHILD_OFFSET;
+        }
+      }
+      const childCenters: number[] = [];
+
+      infos.forEach((info) => {
+        const childCenter = childCursor + info.width / 2;
+
+        if (info.relations.length >= 2) {
+          layoutPersonWithMultipleRelations(
+            info.child,
+            info.relations,
+            childCursor,
+            generation + 1,
+            path
+          );
+        } else if (info.relation) {
+          layoutRelation(info.relation, childCursor, generation + 1, path);
+        } else {
+          layoutPersonOnly(
+            info.child,
+            childCenter - PERSON_W / 2,
+            generation + 1
+          );
+        }
+
+        const pos = personPos.get(info.child.id);
+        if (pos) {
+          const cx = pos.x + PERSON_W / 2;
+          childCenters.push(cx);
+          addLine(cx, jointY, cx, pos.y, "parent");
+        }
+
+        childCursor += info.width + SIBLING_GAP;
+      });
+
+      if (childCenters.length > 0) {
+        addLine(parentCenter, parentBottom, parentCenter, jointY, "parent");
+      }
+
+      if (childCenters.length === 1) {
+        addLine(parentCenter, jointY, childCenters[0], jointY, "sibling");
+      }
+
+      if (childCenters.length >= 2) {
+        addLine(
+          Math.min(...childCenters),
+          jointY,
+          Math.max(...childCenters),
+          jointY,
+          "sibling"
+        );
+      }
     }
 
     function layoutPersonWithMultipleRelations(
@@ -507,177 +694,111 @@ function PersonTreeContent() {
       generation: number,
       path: Set<string>
     ) {
+      const ordered = orderRelationsForPerson(person, rels);
       const y = PAGE_MARGIN + generation * GENERATION_GAP;
-      const totalWidth = measurePersonWithMultipleRelations(person, rels, path);
-      const personX = xStart + totalWidth / 2 - PERSON_W / 2;
 
-      const personPos = addNode(person, personX, y, center?.id === person.id);
-      const personCenterX = personPos.x + PERSON_W / 2;
+      const relationWidths = ordered.map((r) => measureRelation(r, path));
+      const totalWidth =
+        relationWidths.reduce((sum, w) => sum + w, 0) +
+        RELATION_GAP * Math.max(0, relationWidths.length - 1);
 
-      let relCursor = xStart;
+      const spouseIndex = ordered.findIndex((r) => r.relation_type === "spouse");
 
-      rels.forEach((r) => {
-        if (path.has(r.id)) return;
+      let personX = xStart + totalWidth / 2 - PERSON_W / 2;
+
+      if (spouseIndex >= 0) {
+        const spouseRel = ordered[spouseIndex];
+
+        const beforeWidth =
+          relationWidths.slice(0, spouseIndex).reduce((sum, w) => sum + w, 0) +
+          RELATION_GAP * spouseIndex;
+
+        const slotX = xStart + beforeWidth;
+        const slotW = relationWidths[spouseIndex];
+        const unitX = slotX + slotW / 2 - ownUnitWidth() / 2;
+
+        if (spouseRel.person1_id === person.id) {
+          personX = unitX;
+        } else {
+          personX = unitX + PERSON_W + COUPLE_GAP;
+        }
+      }
+
+      const personNodeKey = `multi-${person.id}-${ordered.map((r) => r.id).join("-")}`;
+      const personPosNow = addNode(
+        person,
+        personX,
+        y,
+        center?.id === person.id,
+        personNodeKey
+      );
+
+      personPos.set(person.id, personPosNow);
+
+      const personCenterX = personPosNow.x + PERSON_W / 2;
+
+      let cursor = xStart;
+
+      ordered.forEach((r, index) => {
+        if (path.has(r.id)) {
+          cursor += relationWidths[index] + RELATION_GAP;
+          return;
+        }
 
         const other = relationOtherPerson(r, person.id);
-        if (!other) return;
+        if (!other) {
+          cursor += relationWidths[index] + RELATION_GAP;
+          return;
+        }
 
         const nextPath = new Set(path);
         nextPath.add(r.id);
 
-        const relWidth = measureRelation(r, nextPath);
-        const slotCenter = relCursor + relWidth / 2;
+        const slotW = relationWidths[index];
+        const slotX = cursor;
+        const unitX = slotX + slotW / 2 - ownUnitWidth() / 2;
 
-        let otherCenterX: number;
+        let otherX: number;
 
         if (r.relation_type === "spouse") {
-          otherCenterX =
+          otherX =
             r.person1_id === person.id
-              ? personCenterX + PERSON_W + COUPLE_GAP
-              : personCenterX - PERSON_W - COUPLE_GAP;
+              ? personPosNow.x + PERSON_W + COUPLE_GAP
+              : personPosNow.x - PERSON_W - COUPLE_GAP;
         } else {
+          const slotCenter = slotX + slotW / 2;
 
-
-          const spouseRel = rels.find((rel) => rel.relation_type === "spouse");
-          const spouseOther = spouseRel ? relationOtherPerson(spouseRel, person.id) : null;
-
-          let spouseSide: "left" | "right" | null = null;
-
-          if (spouseOther) {
-            if (spouseRel?.person1_id === person.id) {
-              spouseSide = "right";
-            } else {
-              spouseSide = "left";
-            }
-          }
-
-          if (spouseSide === "right") {
-            otherCenterX = personCenterX - PERSON_W - COUPLE_GAP - DIVORCED_EXTRA_GAP;
-          } else if (spouseSide === "left") {
-            otherCenterX = personCenterX + PERSON_W + COUPLE_GAP + DIVORCED_EXTRA_GAP;
+          if (slotCenter < personCenterX) {
+            otherX = slotCenter - PERSON_W / 2;
           } else {
-            otherCenterX =
-              slotCenter < personCenterX
-                ? personCenterX - PERSON_W - COUPLE_GAP - DIVORCED_EXTRA_GAP
-                : personCenterX + PERSON_W + COUPLE_GAP + DIVORCED_EXTRA_GAP;
+            otherX = slotCenter - PERSON_W / 2;
           }
         }
 
         const otherPos = addNode(
           other,
-          otherCenterX - PERSON_W / 2,
+          otherX,
           y,
-          center?.id === other.id
+          center?.id === other.id,
+          `${r.id}-${other.id}`
         );
 
-        const actualOtherCenterX = otherPos.x + PERSON_W / 2;
+        const otherCenterX = otherPos.x + PERSON_W / 2;
         const coupleY = y + PERSON_H / 2;
 
         addLine(
-          Math.min(personCenterX, actualOtherCenterX) + PERSON_W / 2,
+          Math.min(personCenterX, otherCenterX) + PERSON_W / 2,
           coupleY,
-          Math.max(personCenterX, actualOtherCenterX) - PERSON_W / 2,
+          Math.max(personCenterX, otherCenterX) - PERSON_W / 2,
           coupleY,
           r.relation_type === "divorced" ? "divorced" : "spouse"
         );
 
-        const children = childrenOfCouple(r.id).filter(
-          (child) => !nodePos.has(child.id)
-        );
+        const parentCenter = (personCenterX + otherCenterX) / 2;
 
-        if (children.length > 0) {
-          const parentCenter =
-            r.relation_type === "divorced"
-              ? actualOtherCenterX
-              : (personCenterX + actualOtherCenterX) / 2;
-          const jointY = y + PERSON_H + 28;
+        layoutChildrenFromRelation(r, parentCenter, generation, nextPath);
 
-          const childInfos = children.map((child) => {
-            const childRelations = spouseRelationsOf(child.id).filter(
-              (sr) => sr.id !== r.id && !nextPath.has(sr.id)
-            );
-
-            const childWidth =
-              childRelations.length === 0
-                ? PERSON_W
-                : childRelations.length >= 2
-                  ? measurePersonWithMultipleRelations(child, childRelations, nextPath)
-                  : Math.max(PERSON_W, measureRelation(childRelations[0], nextPath));
-
-            return { child, childRelations, childWidth };
-          });
-
-          const childrenTotalWidth =
-            childInfos.reduce((sum, info) => sum + info.childWidth, 0) +
-            SIBLING_GAP * Math.max(0, childInfos.length - 1);
-
-          let childCursor = parentCenter - childrenTotalWidth / 2;
-
-          if (r.relation_type === "divorced") {
-            const divorcedSide =
-              actualOtherCenterX < personCenterX ? "left" : "right";
-
-            if (divorcedSide === "left") {
-              childCursor = actualOtherCenterX - childrenTotalWidth / 2;
-            } else {
-              childCursor = actualOtherCenterX - childrenTotalWidth / 2;
-            }
-          }
-
-          const childCenters: number[] = [];
-
-          childInfos.forEach((info) => {
-            const childCenter = childCursor + info.childWidth / 2;
-
-            if (info.childRelations.length >= 2) {
-              layoutPersonWithMultipleRelations(
-                info.child,
-                info.childRelations,
-                childCursor,
-                generation + 1,
-                nextPath
-              );
-            } else if (info.childRelations.length === 1) {
-              layoutRelation(
-                info.childRelations[0],
-                childCursor,
-                generation + 1,
-                nextPath
-              );
-            } else {
-              layoutPersonOnly(
-                info.child,
-                childCenter - PERSON_W / 2,
-                generation + 1
-              );
-            }
-
-            const childPos = nodePos.get(info.child.id);
-            if (childPos) {
-              const cx = childPos.x + PERSON_W / 2;
-              childCenters.push(cx);
-              addLine(cx, jointY, cx, childPos.y, "parent");
-            }
-
-            childCursor += info.childWidth + SIBLING_GAP;
-          });
-
-          if (childCenters.length > 0) {
-            addLine(parentCenter, y + PERSON_H, parentCenter, jointY, "parent");
-          }
-
-          if (childCenters.length >= 2) {
-            addLine(
-              Math.min(...childCenters),
-              jointY,
-              Math.max(...childCenters),
-              jointY,
-              "sibling"
-            );
-          }
-        }
-
-        relCursor += relWidth + BRANCH_GAP;
+        cursor += slotW + RELATION_GAP;
       });
     }
 
@@ -702,130 +823,48 @@ function PersonTreeContent() {
       let leftPerson = p1;
       let rightPerson = p2;
 
-      // 選択中の家系に元から所属している人を左にする
       if (!p1IsBaseFamily && p2IsBaseFamily) {
         leftPerson = p2;
         rightPerson = p1;
       }
 
-      const children = childrenOfCouple(r.id);
-
-      let childCursor = xStart;
-      const childLayouts = children.map((child) => {
-        const childRelations = spouseRelationsOf(child.id).filter(
-          (sr) => sr.id !== r.id && !nextPath.has(sr.id)
-        );
-
-        const childWidth =
-          childRelations.length === 0
-            ? PERSON_W
-            : childRelations.length >= 2
-              ? measurePersonWithMultipleRelations(child, childRelations, nextPath)
-              : Math.max(PERSON_W, measureRelation(childRelations[0], nextPath));
-
-        const relation =
-          childRelations.find((cr) => cr.relation_type === "spouse") ??
-          childRelations[0] ??
-          null;
-
-        const result = {
-          person: child,
-          xStart: childCursor,
-          width: childWidth,
-          centerX: childCursor + childWidth / 2,
-          relations: childRelations,
-          relation,
-        };
-
-        childCursor += childWidth + SIBLING_GAP;
-        return result;
-      });
-
-      const branchWidth = measureRelation(r, nextPath);
-      const unitWidth = ownUnitWidth();
-
-      const unitX =
-        childLayouts.length > 0
-          ? (childLayouts[0].centerX + childLayouts[childLayouts.length - 1].centerX) /
-          2 -
-          unitWidth / 2
-          : xStart + branchWidth / 2 - unitWidth / 2;
-
+      const branchWidth = measureRelation(r, path);
+      const unitX = xStart + branchWidth / 2 - ownUnitWidth() / 2;
       const y = PAGE_MARGIN + generation * GENERATION_GAP;
-      const p2X = unitX + PERSON_W + COUPLE_GAP;
 
-      const p1Pos = addNode(leftPerson, unitX, y, center?.id === leftPerson.id);
-      const p2Pos = addNode(rightPerson, p2X, y, center?.id === rightPerson.id);
+      const leftPos = addNode(
+        leftPerson,
+        unitX,
+        y,
+        center?.id === leftPerson.id,
+        `${r.id}-${leftPerson.id}`
+      );
 
-      const leftX = Math.min(p1Pos.x, p2Pos.x);
-      const rightX = Math.max(p1Pos.x, p2Pos.x);
+      const rightPos = addNode(
+        rightPerson,
+        unitX + PERSON_W + COUPLE_GAP,
+        y,
+        center?.id === rightPerson.id,
+        `${r.id}-${rightPerson.id}`
+      );
+
+      personPos.set(leftPerson.id, leftPos);
+      personPos.set(rightPerson.id, rightPos);
+
+      const leftCenter = leftPos.x + PERSON_W / 2;
+      const rightCenter = rightPos.x + PERSON_W / 2;
 
       addLine(
-        leftX + PERSON_W,
+        leftPos.x + PERSON_W,
         y + PERSON_H / 2,
-        rightX,
+        rightPos.x,
         y + PERSON_H / 2,
         r.relation_type === "divorced" ? "divorced" : "spouse"
       );
 
-      if (childLayouts.length > 0) {
-        const unitCenter = unitX + ownUnitWidth() / 2;
-        const parentBottom = y + PERSON_H;
-        const jointY = parentBottom + 28;
+      const parentCenter = (leftCenter + rightCenter) / 2;
 
-        const actualChildCenters: number[] = [];
-
-        childLayouts.forEach((cl) => {
-          if (cl.relations.length >= 2) {
-            layoutPersonWithMultipleRelations(
-              cl.person,
-              cl.relations,
-              cl.xStart,
-              generation + 1,
-              nextPath
-            );
-          } else if (cl.relation) {
-            layoutRelation(cl.relation, cl.xStart, generation + 1, nextPath);
-          } else {
-            layoutPersonOnly(
-              cl.person,
-              cl.xStart + cl.width / 2 - PERSON_W / 2,
-              generation + 1
-            );
-          }
-
-          const pos = nodePos.get(cl.person.id);
-          if (pos) {
-            const centerX = pos.x + PERSON_W / 2;
-            actualChildCenters.push(centerX);
-
-            // 子の中心へ縦線
-            addLine(centerX, jointY, centerX, pos.y, "parent");
-          }
-        });
-
-        if (actualChildCenters.length === 1) {
-          const childCenter = actualChildCenters[0];
-
-          // 親夫婦の中央から下へ
-          addLine(unitCenter, parentBottom, unitCenter, jointY, "parent");
-
-          // 親夫婦の中央から子の中央へ横線
-          addLine(unitCenter, jointY, childCenter, jointY, "sibling");
-        } else if (actualChildCenters.length >= 2) {
-          // 親夫婦の中央から下へ
-          addLine(unitCenter, parentBottom, unitCenter, jointY, "parent");
-
-          // 兄弟線
-          addLine(
-            Math.min(...actualChildCenters),
-            jointY,
-            Math.max(...actualChildCenters),
-            jointY,
-            "sibling"
-          );
-        }
-      }
+      layoutChildrenFromRelation(r, parentCenter, generation, nextPath);
     }
 
     let roots: Relation[] = [];
@@ -859,6 +898,25 @@ function PersonTreeContent() {
         const width = measureRelation(r);
         layoutRelation(r, cursorX, 0);
         cursorX += width + BRANCH_GAP;
+      });
+    }
+
+    const minX = Math.min(
+      0,
+      ...nodes.map((n) => n.x),
+      ...lines.map((l) => Math.min(l.x1, l.x2))
+    );
+
+    if (minX < PAGE_MARGIN) {
+      const shift = PAGE_MARGIN - minX;
+
+      nodes.forEach((n) => {
+        n.x += shift;
+      });
+
+      lines.forEach((l) => {
+        l.x1 += shift;
+        l.x2 += shift;
       });
     }
 
@@ -907,6 +965,43 @@ function PersonTreeContent() {
     );
   }
 
+  function handlePrint() {
+    const printArea = document.querySelector(".print-area") as HTMLElement;
+    const treeInner = document.querySelector(".tree-print-inner") as HTMLElement;
+
+    if (!printArea || !treeInner) return;
+
+    const treeWidth = treeInner.scrollWidth;
+    const treeHeight = treeInner.scrollHeight;
+
+    const A4_WIDTH = 940;
+    const A4_HEIGHT = 660;
+
+    const scale = Math.min(A4_WIDTH / treeWidth, A4_HEIGHT / treeHeight, 1) * 0.9;
+
+    printArea.style.width = `${treeWidth * scale}px`;
+    printArea.style.height = `${treeHeight * scale}px`;
+    printArea.style.overflow = "hidden";
+
+    treeInner.style.transform = `scale(${scale})`;
+    treeInner.style.transformOrigin = "top left";
+
+    const cleanup = () => {
+      printArea.style.width = "";
+      printArea.style.height = "";
+      printArea.style.overflow = "";
+      treeInner.style.transform = "";
+      treeInner.style.transformOrigin = "";
+      window.removeEventListener("afterprint", cleanup);
+    };
+
+    window.addEventListener("afterprint", cleanup);
+
+    setTimeout(() => {
+      window.print();
+    }, 100);
+  }
+
   return (
     <main className="min-h-screen bg-neutral-950 p-5 pb-24 text-white">
       <div className="mx-auto max-w-md">
@@ -932,16 +1027,26 @@ function PersonTreeContent() {
           ))}
         </select>
 
+        <button
+          onClick={handlePrint}
+          className="mt-3 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold print:hidden"
+        >
+          PDF出力
+        </button>
+
         {message && <div className="mt-4 rounded-xl bg-neutral-800 p-3 text-sm">{message}</div>}
       </div>
 
-      <div className="mt-5 overflow-auto rounded-2xl border border-neutral-700 bg-[radial-gradient(circle_at_top,rgba(38,38,38,0.9),rgba(10,10,10,0.95))] p-5">
+      <div className="print-area mt-5 overflow-auto rounded-2xl border border-neutral-700 bg-[radial-gradient(circle_at_top,rgba(38,38,38,0.9),rgba(10,10,10,0.95))] p-5">
         {!center ? (
           <div className="p-8 text-center text-sm text-neutral-400">
             -
           </div>
         ) : (
-          <div className="relative" style={{ width: layout.width, height: layout.height }}>
+          <div
+            className="tree-print-inner relative"
+            style={{ width: layout.width, height: layout.height }}
+          >
             <svg className="absolute left-0 top-0" width={layout.width} height={layout.height}>
               {[...layout.lines]
                 .sort((a, b) => {

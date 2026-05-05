@@ -162,7 +162,7 @@ export default function Home() {
           <h1 className="text-2xl font-bold">家系図アプリ</h1>
           <div className="mt-2 text-sm text-neutral-400 space-y-1">
             <p>家系図をちょっと共有するアプリです。</p>
-            <p>画面再下端のメニューで登録、閲覧できます。</p>
+            <p>画面最下端のメニューで登録、閲覧できます。</p>
             <p>作成：津幡晃徳</p>
           </div>
 
@@ -178,7 +178,7 @@ export default function Home() {
 
                 <input
                   className="mt-4 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-3 outline-none"
-                  placeholder="例：山田家"
+                  placeholder="例：斎藤家（重複時は斎藤家01など）"
                   value={familyName}
                   onChange={(e) => setFamilyName(e.target.value)}
                 />

@@ -1,40 +1,37 @@
-"use client";
-
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const items = [
-  { href: "/", label: "ホーム" },
-  { href: "/person-tree", label: "家系図" },
-  { href: "/ancestor-tree", label: "先祖" },
-  { href: "/people", label: "人登録" },
-  { href: "/relations", label: "関係登録" },
-  { href: "/invite", label: "招待" },
+  { href: "/", label: "ホーム", icon: "🏠" },
+  { href: "/person-tree", label: "家系図", icon: "🌳" },
+  { href: "/ancestor-tree", label: "先祖", icon: "👴" },
+  { href: "/people", label: "人登録", icon: "👤" },
+  { href: "/relations", label: "関係登録", icon: "🔗" },
 ];
 
 export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-neutral-800 bg-neutral-950/95 backdrop-blur">
-      <div className="mx-auto grid max-w-md grid-cols-5">
-        {items.map((item) => {
-          const active = pathname === item.href;
+    <nav className="fixed bottom-0 left-0 right-0 border-t border-neutral-700 bg-neutral-900">
+  <div className="flex justify-center gap-10 px-2 py-1">
+    {items.map((item) => {
+      const active = pathname === item.href;
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={[
-                "flex flex-col items-center justify-center px-2 py-3 text-xs font-semibold",
-                active ? "text-blue-400" : "text-neutral-400",
-              ].join(" ")}
-            >
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-      </div>
-    </nav>
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          className={`flex flex-col items-center justify-center text-[10px] ${
+            active ? "text-blue-400" : "text-neutral-400"
+          }`}
+        >
+          <div className="text-base leading-none">{item.icon}</div>
+          <div className="leading-none whitespace-nowrap">{item.label}</div>
+        </Link>
+      );
+    })}
+  </div>
+</nav>
   );
 }

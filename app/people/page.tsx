@@ -438,7 +438,7 @@ export default function PeoplePage() {
             {people.map((p) => (
               <div key={p.id} className="rounded-xl bg-neutral-800 p-3">
                 {editingId === p.id ? (
-                  <div className="grid grid-cols-[180px_140px_140px_120px_120px_90px_140px_1fr_80px_80px] items-center gap-2 text-sm">
+                  <div className="grid grid-cols-[180px_140px_140px_120px_120px_90px_140px_195px_80px_80px] items-center gap-2 text-sm">
                     <div className="rounded bg-neutral-700 p-2 max-h-18 overflow-y-auto">
                       {familyOptions.map((f) => (
                         <label key={f.id} className="flex items-center gap-2">
@@ -476,6 +476,7 @@ export default function PeoplePage() {
 
                     <input
                       className="rounded bg-neutral-700 p-2"
+                      placeholder="ふりがな（入力あり→下記一覧で名前順表示）"
                       value={editData.kana}
                       onChange={(e) =>
                         setEditData({ ...editData, kana: e.target.value })
@@ -484,6 +485,7 @@ export default function PeoplePage() {
 
                     <input
                       className="rounded bg-neutral-700 p-2"
+                      placeholder="旧姓"
                       value={editData.maiden_name}
                       onChange={(e) =>
                         setEditData({
@@ -495,6 +497,7 @@ export default function PeoplePage() {
 
                     <input
                       className="rounded bg-neutral-700 p-2"
+                      placeholder="長男・次男など"
                       value={editData.birth_order_label}
                       onChange={(e) =>
                         setEditData({
@@ -507,6 +510,7 @@ export default function PeoplePage() {
                     <input
                       type="number"
                       className="rounded bg-neutral-700 p-2"
+                      placeholder="誕生順番（第1子=1、第2子=2、…）"
                       value={editData.sibling_order ?? ""}
                       onChange={(e) =>
                         setEditData({
@@ -531,7 +535,7 @@ export default function PeoplePage() {
                     />
 
                     <textarea
-                      className="min-h-[40px] rounded bg-neutral-700 p-2"
+                      className="w-full rounded-xl border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm min-h-[38px]"
                       value={editData.profile_note}
                       onChange={(e) =>
                         setEditData({
