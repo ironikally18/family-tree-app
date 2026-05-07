@@ -7,6 +7,7 @@ const items = [
   { href: "/ancestor-tree", label: "先祖", icon: "👴" },
   { href: "/people", label: "人登録", icon: "👤" },
   { href: "/relations", label: "関係登録", icon: "🔗" },
+  { href: "/invite", label: "招待" },
 ];
 
 export default function BottomNav() {
